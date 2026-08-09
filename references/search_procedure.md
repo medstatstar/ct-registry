@@ -1,0 +1,110 @@
+# Search procedure (three steps, force order)
+
+Every search MUST execute in this order — no skipping, no reordering:
+
+1. **Determine the source scope (scope first, then keywords).**
+   - First confirm with the user/requirement which registries to cover. Options: CT.gov (direct),
+     EU-CTR (direct), CDE (China, external workflow), WHO ICTRP (global mirror, external workflow),
+     ChiCTR / ISRCTN / DRKS (external workflow, endpoints to be provisioned).
+   - **Scope merge rule (key):** if the scope includes BOTH **WHO ICTRP + CDE**, they already
+     **directly cover** the respective sites, so NO independent search of CT.gov / EU-CTR / ChiCTR /
+     ISRCTN / DRKS is needed — WHO ICTRP mirrors these 14+ primary registries (incl. CT.gov, EU-CTR,
+     ISRCTN, DRKS, ChiCTR) in one call; CDE independently covers China drug trials (WHO's English-title
+     matching misses Chinese-registered trials, so CDE is ALWAYS searched independently).
+     → "WHO + CDE" = "global + China" full coverage, actually hitting only **two endpoints**.
+   - **⚠️ WHO and CDE MUST be invoked SEPARATELY — never one request for both libraries (user
+     2026-07-28 correction):** although they share the same unified endpoint URL and the same token,
+     each is an independent call — `search_ictrp.py --source who …` (call ①) +
+     `search_ictrp.py --source chinadrugtrials …` (call ②). The shared endpoint quota is merged per
+     demand (`demand_id`) and counted once — still two independent HTTP requests, only de-duplicated
+     by the shared demand; `ct_registry.py` orchestrates them as two independent sub-flows — do NOT
+     merge into a single HTTP request.
+   - Only when WHO is unreachable (no token / 403) do you **fall back** to direct CT.gov / EU-CTR etc.
+     (see `references/search_menu.md` FALLBACK-PROMPT flow; do NOT auto-fan-out).
+   - Flags: `ct_registry.py` `--with-ictrp` / `--with-cde` / `--with-euctr` / `--with-chictr`
+     / `--with-isrctn` / `--with-drks`; or call each `search_*.py` separately.
+
+2. **Determine keywords per scope, with necessary zh/en translation.**
+   - Pick terms per included registry by its language/matching habit:
+     - **CT.gov / WHO ICTRP / PubChem (English sources):** use English terms (e.g. `Type 2 Diabetes` + `DPP-4 inhibitor`).
+     - **CDE (Chinese library):** MUST translate to Chinese, and strip the class suffix "类".
+       **DPP-4 inhibitor has no "DPP-4抑制剂" string in CDE** — all its drug names are "**列汀**" class
+       (sitagliptin/saxagliptin/vildagliptin/linagliptin/alogliptin/trelagliptin/tegliptin/prugliatin…),
+       so use **`drugs_name=列汀`** (substring match) to catch them all; do NOT use `DPP-4抑制剂`
+       directly as a CDE keyword (=0 hits). Status uses **`trial_status=进行中`** (enum value, not "正在进行").
+     - Category terms (e.g. a drug class) prefer **abbreviation/full-name or enum members**, not a bare class suffix
+       (see `references/keyword_match.md` and 21 empirical probe lessons).
+   - Chinese primary terms are auto-translated via `kw_localize.localize(text,"zh")`; an English source
+     term not in the term table goes through the confirmation gate (never silently search a Chinese library with English).
+
+3. **Execute the search and return results.**
+   - Direct sources (CT.gov / EU-CTR / PubChem): free, direct `--run`, not counted against the shared daily quota.
+   - External-workflow sources (WHO / CDE / ChiCTR / ISRCTN / DRKS): via the shared endpoint, counted
+     **once per demand (`demand_id`)** — WHO+CDE, keyword tweaks, and repeats within one demand all merge
+     to 1, governed by the `usage_guard` daily cap of 100 **demands** (blocks at cap). **Currently free**;
+     the cap exists purely for fair shared-resource use — see README "配额与资源使用". **Token is
+     localized, long-lived, no per-use re-sign** (only a rare 403 warrants `--store-token`).
+   - After retrieval, uniformly `normalize → aggregate → report`:
+     - **Excel is the final artifact (generated internally):** the orchestrator auto-calls
+       `export_xlsx.export_workbook` at the end to produce `report.xlsx` (4 sheets); no hand-written
+       temp script needed. Optional flags: `--no-excel` (off), `--lang {auto,zh,en}` (UI language),
+       `--min-year N` (exact registration-year lower bound ≥N, with CDE year-from-reg-no fallback when
+       year missing). Visual spec (navy palette / 24px header / zebra rows / status colour blocks /
+       cover logo) comes from the **ct-base `excel_style` shared standard** (`export_xlsx.py` injects
+       `../ct-base/scripts` via `sys.path` then `from excel_style import …`) — not redefined here.
+     - **Intermediate files cleaned by default:** `report.md` and all `*.json` (incl. `normalized*.json`/
+       `agg*.json`/source responses `ictrp.json`/`cde.json`) are deleted by default; **only `.xlsx` is kept**;
+       add `--keep-meta` to retain debug intermediates.
+     - The report includes a **fully clickable homepage link** per record (registration no. resolved to
+       each registry's native URL); PDFs are NOT downloaded by default (only `--download-docs` with an
+       explicit user request writes to disk).
+   - **List first** (total/scope/samples + "list-mode phase/sponsor is Unknown" note); **detail by item
+     count**: ≤100 fetched directly (auto), >100 confirm list first (see Agent interaction contract Gate 2);
+     **PDFs NOT downloaded by default** (explicit user confirmation required to write to disk).
+
+> These three steps are the skill contract: scope, then translation, then search. **Do NOT hard-code
+> EN/ZH terms before scope is fixed**, and do NOT separately hit CT.gov/EU-CTR/ChiCTR/ISRCTN/DRKS when
+> WHO+CDE already cover them.
+
+# Keyword-System Confirmation Gate (v0.4)
+
+When the user provides resolvable search terms, the skill **first proactively expands the keyword
+system** (zh/en mutual translation + synonyms/aliases + drug-class enum, generated as a Manifest by
+`ct-base/scripts/kw_localize.py: expand_keyword()`), **then FORCES a menu for the user to confirm/supplement**
+— never `--run` before confirmation. This differs from the pre-search brief (Gate 1): Gate 1 allows
+"skip if scope is clear", but **this gate is mandatory** — because the expanded terms are added by the
+skill on the user's behalf and must be reviewed.
+
+- **Expansion dimensions (core three):**
+  1. zh/en mutual translation (reuse `localize` / `term_map` / `_EXTRA` / `_SYNONYMS` / brand↔generic);
+  2. synonyms / aliases and brand↔generic (`_SYNONYMS` / `_BRAND_GENERIC`, **cover the whole therapeutic area at once**);
+  3. drug-class enum (`_CLASS_MEMBERS` extended: 列汀/格列净/沙坦/他汀/替尼/磺脲/格列奈/格列酮/ACEI/β-blocker/mAb
+     **enumerated by target family**).
+- **Per-source dispatch:** the Manifest's `per_source` picks the best term set per source matching
+  semantics (WHO/CT.gov exact vs CDE substring), and flags risk (rules from `references/keyword_match.md`,
+  e.g. "列汀类=0").
+- **Mandatory confirmation:** `render_kw_system_menu(manifest)` (multi-axis uses
+  `render_kw_system_menu_multi`) renders a numbered menu (adopt / drop term / add term / adjust scope /
+  cancel); only after the user picks "adopt" does it proceed to Gate 1 → search.
+- **Session cache (confirmed 2026-07-31):** after the user first "adopts", the Manifest is cached to
+  disk (`config/kw_system_cache.json`, md5-deduped); re-running the same terms in this session auto-adopts,
+  no menu. Delete the cache file or change terms to re-confirm.
+- **Skip / edit injection:** only when the user explicitly passes `--no-expand`, or after editing in the
+  gate directly injects the final term set via `--kw-en` / `--kw-zh`, does the menu skip and go straight to
+  Gate 1 (legacy behaviour preserved). `--expand-intent {disease,intervention,drug,drug_class}` can
+  explicitly set intent to avoid auto-misjudgement; `--kw-adopt` means the user already picked "adopt" in the menu.
+- **Implementation location:** `ct_registry.py: _kw_system_gate()` is inserted in `main()`'s `--run`
+  branch, before building per-source commands; after confirmation it injects the `per_source` term set by
+  reusing the existing override flags `--confirm-cond` / `--confirm-intr` / `--ictrp-keyword` / `--cde-keyword` / `--chictr-keyword`.
+- **Lexicon fully externalized + migrated to ct-base (2026-07-31):** all expansion lexicons (synonyms/aliases,
+  brand↔generic, drug-class members, mAb target families, mechanism aliases, class EN→ZH suffixes,
+  `_EXTRA` translation safety net, drug-name EN→ZH) are moved to **`ct-base/scripts/kw_lexicon.json`**
+  (single JSON, no in-code fallback). The keyword-expansion engine `kw_localize.py` (incl. loader) and
+  `term_map.json` are also migrated to ct-base (`ct-base/scripts/` + `ct-base/references/`) as a
+  library-wide standard — ct-registry imports ct-base via `sys.path` then `import kw_localize`, no vendored copy.
+  To add/adjust lexicon, edit `ct-base/scripts/kw_lexicon.json` only — no code change.
+- **Bilingual prompts (ct-base i18n, 2026-07-31):** menu framework labels (title/original/candidates/
+  per-source/risk/inference/confirm-options) all use `ct-base/scripts/i18n.py` `_t("kw_gate.*")` — English
+  by default, auto-switch to Chinese on a Chinese OS; **raw data values (drug names, Chinese class suffixes,
+  user-entered terms) are NEVER translated**. `ct_registry.py`'s stop message also uses `_t("kw_gate.stopped")`.
+- Full rules and Manifest schema: see `ct-base/references/keyword_expand.md` (library-wide standard).
