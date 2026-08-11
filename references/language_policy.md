@@ -28,12 +28,15 @@
      `--auto-confirm` skips the gate (use only for known-safe automation). / 若 CT.gov/PubChem
      关键字不在表且语种不对，运行**中止**并打印建议英文译文，绝不用中文静默搜 CT.gov；
      确认后通过 `--confirm-*` 或改写参数为英文重跑。`--auto-confirm` 跳过确认门。
-- **CDE bilingual search (default ON) / CDE 中英双检（默认开启）**: CDE accepts both Chinese and
-  English. When a CDE keyword has a known (zh, en) pair, `ct_registry.py` searches CDE **once in
-  Chinese and once in English**, then merges the two result sets (dedup by `registry_id`). This
-  captures trials registered in either language on CDE. Disable with `--no-cde-bilingual`. / CDE
-  同时接受中英文；可派生 (zh,en) 对时，技能用中文与英文各搜一次 CDE 并合并去重，覆盖任一种语言
-  登记的试验。如需关闭用 `--no-cde-bilingual`。
+- **CDE silent fallback (updated 2026-08-11) / CDE 静默降级（2026-08-11 更新）**: CDE accepts both Chinese and
+  English. When a CDE keyword has a known (zh, en) pair, `ct_registry.py` first searches CDE **in Chinese
+  only**. If the Chinese search returns 0 records AND a valid English translation exists, it **automatically
+  re-runs with the English keyword** and merges the two result sets (dedup by `registry_id`). This replaces
+  the previous default bilingual parallel (which always fired both zh+en concurrently), cutting HTTP calls
+  roughly in half while preserving coverage of trials registered in either language on CDE. Disable with
+  `--no-cde-bilingual`. / CDE 同时接受中英文；可派生 (zh,en) 对时，技能先用中文检索 CDE；若中文返回 0 条且
+  存在有效英文译文，则**自动用英文再查一次**并合并去重。这取代了此前默认的中英并行双检（总是同时发两个 HTTP），
+  在覆盖任一种语言登记试验的前提下，HTTP 调用数约减半。如需关闭用 `--no-cde-bilingual`。
 - **Behavior**:
   - Input already in the target language → used as-is (no-op).
   - Term found in map → translated; a `[ct_registry][i18n]` log line documents the switch.

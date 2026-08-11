@@ -187,9 +187,9 @@ python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-pubchem 
 ```bash
 # 英文主词：CT.gov 原样使用；CDE 关键词自动推导为中文
 python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-cde --out-dir ./out --run
-# 中文主词：CT.gov 自动翻译为英文；CDE 原样使用（中英双语）
+# 中文主词：CT.gov 自动翻译为英文；CDE 原样使用（中文 0 条时静默降级到英文）
 python scripts/ct_registry.py --cond "非小细胞肺癌" --status RECRUITING --with-cde --out-dir ./out --run
-# 显式覆盖 CDE 关键词（仍双语）
+# 显式覆盖 CDE 关键词（中文 0 条时静默降级到英文）
 python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-cde --cde-keyword "高血压" --out-dir ./out --run
 # CDE 高级筛选（药品 + 适应症 + 状态），并入
 python scripts/ct_registry.py --cond "NSCLC" --with-cde --cde-mode combined --cde-keyword "678" --cde-trial-status "已完成" --run

@@ -71,7 +71,7 @@
 |------|--------|------------|-----------|------|
 | ① CT.gov | ClinicalTrials.gov | Tier 1 直连（必需） | EN | 全球主源，字段最全，更新最频 |
 | ② EU CTR | 欧盟（legacy EudraCT） | Tier 1 直连 | EN | 欧盟试验，纯 HTTP 解析 |
-| ③ CDE | 中国药物临床试验登记平台 | Tier 2 外部服务 | ZH（中英双检） | 中国法定药物试验；已实测可用 |
+| ③ CDE | 中国药物临床试验登记平台 | Tier 2 外部服务 | ZH（静默降级，中文 0 条时自动补发英文） | 中国法定药物试验；已实测可用 |
 | ④ ChiCTR | 中国临床试验注册中心 | Tier 2 外部服务 | ZH | 中国研究者发起试验；端点待 provisioning |
 | ⑤ ISRCTN | 国际标准随机对照试验号库 | Tier 2 外部服务 | EN | 英国/国际；端点待 provisioning |
 | ⑥ DRKS | 德国注册库 | Tier 2 外部服务 | EN | 德语区；端点待 provisioning |
@@ -162,7 +162,7 @@
 
 ⚠️ 关键字本地化提示：
 - CT.gov / WHO 将以英文检索：{en_keyword}
-- CDE / ChiCTR 将以中文检索：{zh_keyword}（CDE 默认中英双检）
+- CDE / ChiCTR 将以中文检索：{zh_keyword}（CDE 默认静默降级：中文 0 条时自动补发英文）
 {若国外源未命中术语表：→ 需确认英文译文（见下方"确认门"）}
 
 💡 计费说明：合并为 1 个需求（demand_id={demand_id}）；**当前免费使用**，每日上限 100 个需求，
@@ -204,7 +204,7 @@
 | 场景 | 推荐配置 |
 |------|----------|
 | 快速了解某病/药全球试验格局 | CT.gov + EU CTR（直连），状态不限，max 50 |
-| 中国全覆盖（药物试验 + 研究者发起） | CT.gov + CDE（中英双检）+ ChiCTR |
+| 中国全覆盖（药物试验 + 研究者发起） | CT.gov + CDE（静默降级）+ ChiCTR |
 | 全球竞品 / 格局调研 | CT.gov + EU CTR + ISRCTN + DRKS + CDE + ChiCTR + WHO ICTRP |
 | 仅看招募中试验 | 上述任一配置 + `--status RECRUITING` |
 | 药物机制 / 靶点背景 | 任一配置 + `--with-pubchem --drug <药名>` |
@@ -322,7 +322,7 @@ Agent：
 🔬 临床试验检索准备
 当前已识别：
 - 检索主题：osimertinib（干预/药物）
-推荐配置：CT.gov + CDE（中英双检）+ ChiCTR（中国全覆盖）
+推荐配置：CT.gov + CDE（静默降级）+ ChiCTR（中国全覆盖）
 确认执行？
 1. ✅ 直接执行（推荐）
 2. ✏️ 修改参数

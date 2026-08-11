@@ -140,7 +140,7 @@ No. Output is for reference / planning only. CSR / filing documents must be prod
 When you mirror 14+ registries through WHO ICTRP in one call, the backend literally crawls those registries — **it is not instant**. Here's what to expect:
 
 - **How long:** a live retrieval typically takes **1–5 minutes** to come back. The skill first hands you a "submitted, running" receipt, then polls automatically and delivers the result when ready — you don't have to babysit it.
-- **Why it can hug the 5-minute ceiling:** the unified third-party endpoint sits behind a hard **5-minute gateway cap**. Broad queries like `cancer`, or "global + no country filter", can run right up against that wall and, rarely, time out. If it does, the skill tells you explicitly instead of silently dropping data.
+- **Why it can hug the 5-minute ceiling:** the unified third-party endpoint sits behind a hard **5-minute gateway cap**. The workflow uses **P4 async fire-and-forget** (`/run` returns immediately with a `run_id`, then polls `/run/status/{run_id}` with exponential backoff) to bypass this wall. Broad queries like `cancer`, or "global + no country filter", can run right up against that wall and, rarely, time out. If it does, the skill tells you explicitly instead of silently dropping data.
 - **How to keep the data volume sane:** WHO global results can be huge. If a query returns too few rows or times out, it's usually **too broad** — narrow the keyword (e.g. `osimertinib` instead of `cancer`), or use **advanced search** (just say "advanced search" in conversation; the code auto-builds precise `drug AND condition` filters, returning a smaller, faster set). There's also a **daily cap of 100 demands** (see FAQ above) — normal use won't get near it.
 
 ## Safety (safe preview)
@@ -187,9 +187,9 @@ python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-pubchem 
 ```bash
 # English primary term: CT.gov uses it as-is; CDE keyword auto-derived to Chinese
 python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-cde --out-dir ./out --run
-# Chinese primary term: CT.gov auto-translated to English; CDE uses it as-is (bilingual zh+en)
+# Chinese primary term: CT.gov auto-translated to English; CDE uses it as-is (silent fallback to EN if ZH=0)
 python scripts/ct_registry.py --cond "非小细胞肺癌" --status RECRUITING --with-cde --out-dir ./out --run
-# explicit CDE keyword override (still bilingual)
+# explicit CDE keyword override (silent fallback to EN if ZH=0)
 python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-cde --cde-keyword "高血压" --out-dir ./out --run
 # advanced filter on CDE (drug + indication + status), merged
 python scripts/ct_registry.py --cond "NSCLC" --with-cde --cde-mode combined --cde-keyword "678" --cde-trial-status "已完成" --run

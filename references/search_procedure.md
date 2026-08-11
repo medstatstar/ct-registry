@@ -36,6 +36,10 @@ Every search MUST execute in this order — no skipping, no reordering:
        (see `references/keyword_match.md` and 21 empirical probe lessons).
    - Chinese primary terms are auto-translated via `kw_localize.localize(text,"zh")`; an English source
      term not in the term table goes through the confirmation gate (never silently search a Chinese library with English).
+   - **CDE search uses silent fallback (updated 2026-08-11):** the orchestrator first runs the Chinese keyword
+     against CDE; if it returns 0 records AND a valid English translation exists, it automatically re-runs with
+     the English keyword and merges the two result sets. This replaces the previous default bilingual parallel
+     (which always fired both zh+en concurrently). Disable silent fallback with `--no-cde-bilingual`.
 
 3. **Execute the search and return results.**
    - Direct sources (CT.gov / EU-CTR / PubChem): free, direct `--run`, not counted against the shared daily quota.
@@ -44,6 +48,11 @@ Every search MUST execute in this order — no skipping, no reordering:
      to 1, governed by the `usage_guard` daily cap of 100 **demands** (blocks at cap). **Currently free**;
      the cap exists purely for fair shared-resource use — see README "配额与资源使用". **Token is
      localized, long-lived, no per-use re-sign** (only a rare 403 warrants `--store-token`).
+   - **P4 async fire-and-forget (updated 2026-08-11):** the Coze `/run` endpoint returns immediately with
+     a `run_id`; the client polls `/run/status/{run_id}` with exponential backoff. This bypasses the
+     gateway's 300s hard wall. The workflow runs Playwright + Chromium headless shell for both CDE and
+     WHO ICTRP (no remote API parsing), with a node-level budget of 270s per source. Detail mode uses
+     8-thread parallel fetching.
    - After retrieval, uniformly `normalize → aggregate → report`:
      - **Excel is the final artifact (generated internally):** the orchestrator auto-calls
        `export_xlsx.export_workbook` at the end to produce `report.xlsx` (4 sheets); no hand-written

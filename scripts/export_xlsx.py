@@ -47,27 +47,25 @@ import xlsxwriter
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# i18n — reuse ct-base's shared i18n (single source of truth)
+# i18n — ct-base's shared i18n (vendored into this skill directory)
 # ═══════════════════════════════════════════════════════════════════════════
-# ct-registry and ct-base are sibling skills under ~/.workbuddy/skills/.
-_CT_BASE_SCRIPTS = os.path.normpath(os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "..", "ct-base", "scripts"))
-if _CT_BASE_SCRIPTS not in sys.path:
-    sys.path.insert(0, _CT_BASE_SCRIPTS)
+# IMPORTANT (2026-08-11): ct-base is NEVER published. Every ct- skill must carry
+# its own complete copy. We ONLY import from this skill's own `scripts/` dir.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 try:
     from i18n import t, set_lang   # noqa: E402
-except Exception:  # defensive fallback — ct-base must be present in normal use
+except Exception:  # defensive fallback — vendored copy must be present
     def t(key, **kw):
         return key
     def set_lang(code):
         pass
 
 
-# ---- shared Excel visual standard (single source of truth in ct-base) ------
+# ---- shared Excel visual standard (vendored into this skill) ------
 # All palette / format / layout / chart / status logic lives in
-# ct-base/scripts/excel_style.py. We import it and derive the legacy
-# module-level constants the build_* functions still reference (tab colours,
-# conditional-format colours, source pie colours).
+# scripts/excel_style.py (vendored from ct-base/scripts/excel_style.py).
 try:
     from excel_style import (
         make_formats, banner as _banner, page_decor as _page_decor,
@@ -78,9 +76,9 @@ try:
         year_of as _year, HEADER_H, STATUS_LEGEND as STATUS_LEGEND_KEYS,
         STATUS_LEGEND_COLOR as _LEGEND_COLOR,
     )
-except Exception as _e:  # ct-base is a required sibling skill in normal use
-    raise RuntimeError("ct-registry export_xlsx: cannot import ct-base "
-                       "excel_style standard: " + str(_e))
+except Exception as _e:  # vendored copy must be present
+    raise RuntimeError("ct-registry export_xlsx: cannot import vendored "
+                       "excel_style: " + str(_e))
 P = PALETTES["registry"]
 NAVY, BLUE, LIGHT, BANNER = P["navy"], P["blue"], P["light"], P["banner"]
 GRID, GREYTX = P["grid"], P["greytx"]
@@ -238,13 +236,13 @@ def _make_formats(wb):
 
 
 # ---- low-level styling helpers (operate on a worksheet + formats) ----------
-# _banner / _page_decor / _kpi_card are imported from ct-base excel_style.
+# _banner / _page_decor / _kpi_card are imported from vendored excel_style.
 def _merge_box(ws, r1, c1, r2, c2, value, fmt):
     ws.merge_range(r1, c1, r2, c2, value, fmt)
 
 
 # ---- chart factory: _add_chart / _style_series / _chart_h / _chart_w /
-#     dist_pie_points are all imported from ct-base excel_style. --------------
+#     dist_pie_points are all imported from vendored excel_style. --------------
 
 
 # ---- master table columns --------------------------------------------------

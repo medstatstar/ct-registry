@@ -130,8 +130,11 @@ python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING \
   maps above (so `sartan`→`沙坦` hits 788 instead of 10). **Only if a keyword truly cannot be resolved to
   Chinese** does the run render the **keyword-matching MENU** (`kw_localize.kw_match_candidates` →
   `render_kw_menu`) and stop for the user to pick an interpretation — it no longer silently searches CDE with
-  English text. **CDE bilingual search (default ON)** additionally runs the keyword in **both** Chinese and
-  English and merges the two result sets (dedup by registry_id). Disable with `--no-cde-bilingual`.
+  English text. **CDE search uses silent fallback (updated 2026-08-11):** the orchestrator first runs the
+  Chinese keyword against CDE; if it returns 0 records AND a valid English translation exists, it automatically
+  re-runs with the English keyword and merges the two result sets. This replaces the previous default
+  bilingual parallel (which always fired both zh+en concurrently). Disable silent fallback with
+  `--no-cde-bilingual`.
 - **Non-standard / category keywords → MENU, not trial-and-error:** when a term is a drug *class* (e.g.
   `sartan`) or misses the map, `kw_match_candidates()` offers `as_is` / `translate` / `class_suffix`
   (→ 沙坦, CDE wins) / `enumerate` (→ specific ARB names, WHO wins) / `structured` (WHO fields). See
@@ -186,7 +189,7 @@ default); the shared endpoint daily cap is 20 (per demand_id, WHO+CDE merged cou
 ### Parallel retrieval (v0.3.29 → v0.3.30)
 
 `ct_registry.py` runs independent network sources inside `ThreadPoolExecutor` batches:
-- **Batch-1** = **WHO ICTRP + CDE (bilingual zh+en)** — different endpoints / separate subprocesses → dispatched concurrently. Wall-clock drops from "serial sum" to "max of the two".
+- **Batch-1** = **WHO ICTRP + CDE-zh** — different endpoints / separate subprocesses → dispatched concurrently. If CDE-zh returns 0 records AND a valid English translation exists, the orchestrator auto-runs CDE-en and merges (silent fallback, updated 2026-08-11). Wall-clock drops from "serial sum" to "max of the two".
 - **Batch-2 (fallback / cover, v0.3.30)** = **EU-CTR (pure HTTP) + ISRCTN / DRKS / ChiCTR (unified endpoint, source=isrctn/drks/chictr)** — WHO-covered national registries: skipped when WHO succeeds, run independently + aggregated when opted in (`--with-<src>`) or when WHO fails + `--fallback-covered` is set.
 - Serial only where a source depends on another (e.g. CDE detail-fetch needs the project list).
 - Quota charged **exactly once per demand** even under concurrency: parent calls `_ensure_quota_checked(demand_id)` once (sets `CT_DEMAND_CHECKED=1`); child subprocesses see the flag and skip their own `usage_guard.check()`.

@@ -5,21 +5,16 @@ import json
 import os
 import sys
 
-# Shared ct-base anti-hallucination guard (BASE.md §17.1) is resolved from, in
-# priority order: 1) this skill's own injected copy, 2) ../ct-base/scripts,
-# 3) ../../ct-base/scripts. report.py runs as a standalone subprocess spawned by
-# ct_registry.py, so it must inject the path itself (sys.path is per-process).
-HERE = os.path.dirname(os.path.abspath(__file__))
-for _p in (
-    os.path.join(HERE, "..", "ct-base", "scripts"),
-    os.path.join(HERE, "..", "..", "ct-base", "scripts"),
-):
-    if os.path.isdir(_p):
-        sys.path.insert(0, _p)
+# Shared ct-base source_guard is resolved from this skill's own scripts/ dir.
+# IMPORTANT (2026-08-11): ct-base is NEVER published. Every ct- skill must carry
+# its own complete copy. We ONLY resolve from this skill's own `scripts/` dir —
+# never fall back to a ct-base sibling.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _HERE)
 
 try:
     from source_guard import require_source  # BASE.md §17.1 溯源红线
-except Exception:  # noqa: BLE001  (ct-base guaranteed sibling in the ct- lib)
+except Exception:  # noqa: BLE001  (vendored copy guaranteed in publish package)
     require_source = None
 
 

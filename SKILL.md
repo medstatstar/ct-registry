@@ -3,7 +3,7 @@ slug: ct-registry
 displayName: 临床试验注册检索专家 / Clinical Trial Registry Search
 name: ct-registry
 cn_name: 临床试验注册检索专家
-version: 0.3.78
+version: 0.3.79
 invocable: true
 required_commands: [python]
 summary: 跨源检索临床试验注册库（ClinicalTrials.gov / PubChem 自动直连；中国 CDE 经外部工作流自动化检索、ChiCTR 经用户粘贴页面本地解析；EU CTIS 按号富集）并归一化聚合，辅助立项查重、对照设计与竞品格局分析。检索公开注册库（B 档：普通数据输入 + 对外检索）。
@@ -82,6 +82,8 @@ Search global clinical-trial registries in one pass, normalize heterogeneous rec
 - Aggregation analysis → phase / status distribution, top sponsors, timeline, competitor landscape.
 - Drug → target mapping (PubChem) → mechanism & competitor target comparison.
 - Structured output → JSON / Markdown / optional PNG; chained to `ct-pipeline` and `ct-protocol`.
+- **Status track / diff (P0-A, 纯本地):** `--track` 把归一化结果写入 `registry_snapshot.json`；`--diff <快照A> <快照B>` 按 NCT 集合比对两 `normalized.json`，输出 `status_delta`（新增/移除/状态变更/同义拼写变更），diff 按 `STATUS_EQUIV` 同义归一比较（RECRUITING≈ACTIVE_NOT_RECRUITING≈ONGOING 同桶，不误报）。零联网。
+- **Tier-2 优雅降级兜底 (P0-B, 仅 --run 联网):** WHO 超时/异常自动降级为 CDE + ClinicalTrials.gov 出报告并置 `who_status=failed`（不隐藏）；CDE 返回 0 条触发一次自动重跑（`--cde-retry` 默认 1，限频 `--cde-retry-delay` 默认 2s），仍 0 则标 `zero_hit_unverified`；降级处均在 `report.md` 披露数据流向（另写 `run_status.json`）。
 
 ## Requirements
 

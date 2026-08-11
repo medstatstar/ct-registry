@@ -54,44 +54,49 @@ import argparse
 import datetime
 import json
 import os
+import shutil
 import subprocess
 import sys
+import time
 import concurrent.futures
 import usage_guard
+import track_diff  # P0-A: local status diff / snapshot track (no network)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
 
+# --- P0-B run-status manifest (graceful-degradation disclosure) ----------
+# Surfaced to the user via run_status.json + a disclosure line appended to
+# report.md. Only mutated during a networked (--run) retrieval.
+_RUN_STATUS = {
+    "who_status": "ok",                 # "ok" | "failed" (WHO timed out / errored)
+    "cde_zero_hit_unverified": False,   # CDE returned 0 after retry
+    "cde_retried": 0,                   # number of CDE auto-reruns performed
+}
+
 # Shared ct-base assets (i18n + the keyword-expansion engine `kw_localize`) are
-# injected into this skill at publish time (see ct-base/scripts/publish_inject.py).
-# At runtime we resolve from, in priority order:
-#   1. this skill's own `scripts/` dir  -> published / injected copy (self-contained)
-#   2. `../ct-base/scripts`              -> packaged layout (ct-registry/ct-base/scripts)
-#   3. `../../ct-base/scripts`           -> dev sibling install (skills/ct-base/scripts)
-# Dev mode keeps a single source of truth (no hand-maintained vendored copies); the
-# published package carries its own injected copies so it never depends on ct-base.
-for _p in (
-    HERE,
-    os.path.join(HERE, "..", "ct-base", "scripts"),
-    os.path.join(HERE, "..", "..", "ct-base", "scripts"),
-):
+# vendored into this skill directory (see ct-base/scripts/publish_inject.py).
+# IMPORTANT (2026-08-11): ct-base is NEVER published. Every ct- skill must carry
+# its own complete copy of shared assets. At runtime we ONLY resolve from this
+# skill's own `scripts/` directory — never fall back to a ct-base sibling.
+for _p in (HERE,):
     if os.path.isdir(_p):
         sys.path.insert(0, _p)
 
 import kw_localize as kl
 
-# Shared breadth guard (keyword 过宽 -> 防 Coze 端点 1000+ 页爆炸)，来自 ct-base 底座。
+# keyword_breadth is also a ct-base shared asset (vendored into this skill).
 try:
     from keyword_breadth import (is_broad_keyword, choose_primary_keyword,
                                  plan_coze_keywords)
-except Exception:  # noqa: BLE001  (ct-base sibling guaranteed in the ct- lib)
+except Exception:  # noqa: BLE001  (vendored copy guaranteed in publish package)
     is_broad_keyword = choose_primary_keyword = plan_coze_keywords = None
 
 # Bilingual runtime prompts delegate to ct-base's shared i18n (EN default, ZH on
 # a zh-* OS). Only framework labels are localized; raw data values are not.
 try:
     from i18n import t as _t  # noqa: F401
-except Exception:  # noqa: BLE001  (ct-base is a guaranteed sibling in the ct- lib)
+except Exception:  # noqa: BLE001  (vendored copy guaranteed in publish package)
     def _t(key, **kw):
         return kw.get("_default", key)
 
@@ -417,6 +422,47 @@ def _merge_bilingual(zh_path, en_path, out_path, label="bilingual"):
 _bilingual_cde_merge = _merge_bilingual
 
 
+def _emit_run_status(args):
+    """P0-B: write the run-status manifest and append a data-flow disclosure.
+
+    Only meaningful after a networked (--run) retrieval — the manifest flags
+    (``who_status``, ``cde_zero_hit_unverified``) are only ever set during a
+    real pull. Emits ``run_status.json`` and, when a degradation happened, a
+    disclosure paragraph appended to ``report.md`` so the user is never left
+    with a silently-incomplete report.
+    """
+    if not getattr(args, "run", False):
+        return
+    out_dir = args.out_dir
+    try:
+        with open(os.path.join(out_dir, "run_status.json"), "w", encoding="utf-8") as f:
+            json.dump(_RUN_STATUS, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[ct_registry][run_status] skip write: {e}")
+
+    who_failed = _RUN_STATUS.get("who_status") == "failed"
+    cde_zero = _RUN_STATUS.get("cde_zero_hit_unverified")
+    if not (who_failed or cde_zero):
+        return
+    lines = ["", "> ⚠️ 数据流向披露（降级兜底 / degradation fallback）："]
+    if who_failed:
+        lines.append("> - WHO ICTRP 端点检索超时/失败，已自动降级为 CDE + ClinicalTrials.gov "
+                     "独立出报告（who_status=failed；未隐藏、未假装完整，覆盖源可能不全）。")
+    if cde_zero:
+        lines.append("> - CDE 返回 0 条且自动重跑仍 0 条，标记 zero_hit_unverified"
+                     "（未经第三方复核，该部分结果仅供参考）。")
+    lines.append("> 其余数据仍通过公开注册库 / 第三方统一端点（Coze）检索，仅公开查询词出域；"
+                 "详见 SKILL.md 数据流向说明。")
+    try:
+        with open(os.path.join(out_dir, "report.md"), "a", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        print("[ct_registry][run_status] disclosure appended to report.md "
+              f"(who_status={_RUN_STATUS['who_status']}, "
+              f"zero_hit_unverified={cde_zero}, cde_retried={_RUN_STATUS['cde_retried']})")
+    except Exception as e:
+        print(f"[ct_registry][run_status] disclosure append skipped: {e}")
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Cross-source trial-registry search -> normalize -> aggregate -> report")
@@ -530,13 +576,39 @@ def main():
     ap.add_argument("--out-dir", default="./out")
     ap.add_argument("--run", action="store_true",
                     help="actually run network requests (default = preview only)")
+    # --- P0-A: local snapshot track / diff (no network) ---
+    ap.add_argument("--diff", nargs=2, metavar=("SNAP_A", "SNAP_B"),
+                    help="本地比对两快照 normalized.json（按 NCT 集合 diff）-> status_delta"
+                         "（纯本地、零联网，不触发任何网络请求）")
+    ap.add_argument("--diff-out", help="--diff 结果写出 JSON 路径（默认仅打印）")
+    ap.add_argument("--track", action="store_true",
+                    help="--run 后将归一化结果写入 registry_snapshot.json，供下次 --diff 比对"
+                         "（增量兼容，不破坏原 normalized.json 输出）")
+    # --- P0-B: Tier-2 graceful-degradation knobs (only active on --run / network) ---
+    ap.add_argument("--cde-retry", type=int, default=1,
+                    help="CDE 返回 0 条时的自动重跑次数（默认 1，限频）；仅 --run 联网时触发")
+    ap.add_argument("--cde-retry-delay", type=float, default=2.0,
+                    help="CDE 重跑之间的限频间隔秒数（默认 2.0，避免放大端点负载）")
     args = ap.parse_args()
+
+    # P0-A: pure-local diff is handled standalone (no network, no gates) and exits.
+    if args.diff:
+        track_diff.cmd_diff(args.diff[0], args.diff[1], args.diff_out)
+        return
     # One ct_registry --run = ONE retrieval demand. Inject a unique demand_id into the
     # environment so every child process (WHO + CDE + detail + tweaks within this run)
     # shares it and collapses to a SINGLE counted call against the shared endpoint.
     import os as _os
     import datetime as _dt
     _os.environ["CT_DEMAND_ID"] = f"ctreg-{_dt.datetime.now():%Y%m%d%H%M%S%f}"
+
+    # Reset the P0-B run-status manifest for this run (fresh process in normal
+    # use; reset defensively in case the module is reused across calls).
+    for _k in _RUN_STATUS:
+        if _k == "who_status":
+            _RUN_STATUS[_k] = "ok"
+        else:
+            _RUN_STATUS[_k] = (0 if _k == "cde_retried" else False)
 
     # 关键词广度守卫（检索前拦截，preview 与 --run 均生效，无网络）：
     # Coze 完整翻页源单关键词过宽 -> 中止；多关键词自动重排主词。
@@ -671,6 +743,12 @@ def main():
     normalized = os.path.join(args.out_dir, "normalized.json")
     run([PY, os.path.join(HERE, "normalize.py"), *norm_inputs, "--out", normalized])
 
+    # --- P0-A: --track snapshots the current normalized result for future diff ---
+    if args.track:
+        _snap = os.path.join(args.out_dir, "registry_snapshot.json")
+        shutil.copy(normalized, _snap)
+        print(f"[ct_registry][track] snapshot -> {_snap}")
+
     # --- aggregate + report ---
     agg = os.path.join(args.out_dir, "agg.json")
     run([PY, os.path.join(HERE, "aggregate.py"), "--in", normalized, "--out", agg])
@@ -707,6 +785,9 @@ def main():
         report = os.path.join(args.out_dir, "report.md")
         run([PY, os.path.join(HERE, "report.py"), "--in", agg, "--out", report,
              "--json-out", os.path.join(args.out_dir, "agg_full.json")])
+
+    # --- P0-B: emit run-status manifest + disclosure (graceful-degradation) ---
+    _emit_run_status(args)
 
     # --- build Excel (built-in) ---
     if args.excel and _export_xlsx is not None:
@@ -1104,46 +1185,85 @@ def _interpret_who(res, out):
     """Interpret a WHO task result -> (ok, reason)."""
     rc, sd, exists = res
     if rc != 0:
+        # P0-B: WHO failed -> flag it so the report can disclose the degradation
+        # (we auto-fall back to CDE + CT.gov rather than aborting).
+        _RUN_STATUS["who_status"] = "failed"
         if _is_timeout(sd) or _is_timeout(str(sd)):
             return False, f"TIMEOUT: {(sd.strip()[-240:]) or 'read timeout'}"
         return False, f"retrieval failed (exit {rc})"
     if not exists:
+        _RUN_STATUS["who_status"] = "failed"
         return False, "no output written (likely HTTP != 200)"
     try:
         with open(out, encoding="utf-8") as f:
             data = json.load(f)
     except Exception:
+        _RUN_STATUS["who_status"] = "failed"
         return False, "output unreadable"
     if data.get("is_timeout"):
+        _RUN_STATUS["who_status"] = "failed"
         return False, f"TIMEOUT(is_timeout=True): Coze 检索超过等待上限，数据可能不全"
     if data.get("error_msg"):
+        _RUN_STATUS["who_status"] = "failed"
         return False, f"error_msg: {data.get('error_msg')}"
     return True, None
 
 
 def _who_failed(who_reason, args):
-    """Handle a WHO failure. Returns 'stop' (caller should return) or 'fallback'."""
+    """Handle a WHO failure.
+
+    P0-B graceful degradation: WHO is the meta-aggregator. When it times out or
+    errors we no longer abort the whole run — we auto-degrade to a CDE +
+    ClinicalTrials.gov report (those sources are already in ``norm_inputs`` /
+    always retrieved independently) and mark ``who_status=failed`` for disclosure.
+    Returns 'fallback' (caller continues building the report) instead of 'stop'.
+    """
     if _is_timeout(who_reason):
         print("[ct_registry][TIMEOUT] ⚠️ WHO ICTRP 共享端点检索超时（外部网络故障，非技能问题）。")
-        print("[ct_registry][TIMEOUT] 请选择后续操作（代理转达为交互菜单，用户无需手动拼字段）：")
-        print("[ct_registry][TIMEOUT]   ① 改用 WHO 高级检索（combined 模式，代码自动拆分关键字做服务端 AND 过滤，返回量更小更快）")
-        print("[ct_registry][TIMEOUT]        -> 代理用 ct_registry.py --who-mode combined 重新发起（药物->who_intervention / 疾病->who_condition）")
-        print("[ct_registry][TIMEOUT]   ② 缩小 / 更换关键字后重试")
-        print("[ct_registry][TIMEOUT]   ③ 跳过 WHO，用其他已检索源（CT.gov / EU-CTR / CDE 等）出报告")
+        print("[ct_registry][TIMEOUT] P0-B 优雅降级：跳过 WHO，改用 CDE + ClinicalTrials.gov 独立出报告"
+              "（已在结果中置 who_status=failed，不隐藏、不假装完整）。")
+        print("[ct_registry][TIMEOUT] 亦可选：① --who-mode combined 重新发起（服务端 AND 过滤，更快）；"
+              "② 缩小/更换关键字重试。")
         _print_timeout_advice("WHO ICTRP（全球 14+ 一级注册库聚合）")
-        return "stop"
+        return "fallback"
     print(f"[ct_registry][FALLBACK-PROMPT] WHO ICTRP 检索失败（{who_reason}）。")
-    print("[ct_registry][FALLBACK-PROMPT] WHO 已覆盖以下数据源, 是否对其分别独立检索并聚合?")
+    print("[ct_registry][FALLBACK-PROMPT] P0-B 优雅降级：已自动改用 CDE + ClinicalTrials.gov 出报告"
+          "（who_status=failed）。")
+    print("[ct_registry][FALLBACK-PROMPT] WHO 已覆盖以下数据源, 如需对其分别独立检索并聚合可加 --fallback-covered 重跑:")
     for _lbl in ["CT.gov (ClinicalTrials.gov)", "EU-CTR (欧盟临床试验)",
                  "ISRCTN", "DRKS (德国)",
                  "ChiCTR (中国临床试验注册中心)"]:
         print(f"[ct_registry][FALLBACK-PROMPT]   - {_lbl}")
     if args.fallback_covered:
         print("[ct_registry] --fallback-covered 已设置: 对以上数据源分别独立检索并聚合。")
-        return "fallback"
-    print("[ct_registry] 如需执行, 请加 --fallback-covered 重新运行"
-          "(或显式指定需检索的源)。已停止。")
-    return "stop"
+    print("[ct_registry] P0-B 已自动用 CDE + ClinicalTrials.gov 出报告（who_status=failed）；"
+          "如需额外覆盖源请加 --fallback-covered 重跑。")
+    return "fallback"
+
+
+def _cde_count(out_path):
+    """Return # of records in a raw CDE / Coze output file, or None if unreadable."""
+    try:
+        with open(out_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return None
+    if isinstance(data, list):
+        return len(data)
+    recs = data.get("records")
+    if recs is None:
+        recs = data.get("project_list")
+    if recs is None:
+        tc = data.get("total_count")
+        if isinstance(tc, int):
+            return tc
+        return 0
+    if isinstance(recs, str):
+        try:
+            recs = json.loads(recs)
+        except Exception:
+            return 0
+    return len(recs) if hasattr(recs, "__len__") else 0
 
 
 def _interpret_cde(results, cde_tasks, cde_out, cde_zh, cde_en, cde_kw,
@@ -1153,44 +1273,124 @@ def _interpret_cde(results, cde_tasks, cde_out, cde_zh, cde_en, cde_kw,
 
     cde_path_type: "api_key" → commercial API path (fast, no Coze); "workflow" → Coze.
     Handles bilingual (CDE-zh / CDE-en) merge and single-run fallback.
+
+    P0-B graceful degradation: if CDE returns 0 records (a *successful but empty*
+    pull — exit 0, file written), auto-rerun ``--cde-retry`` times, rate-limited
+    by ``--cde-retry-delay`` to avoid放大端点负载. If it is STILL 0 after the
+    retries, mark ``cde_zero_hit_unverified`` (the trial set could not be verified
+    via the third-party endpoint) but keep going so a report can still be built
+    from the other sources. A hard timeout / failure is NOT retried here (original
+    skip behaviour preserved). Only triggered on a real networked (--run) pull.
     """
+    retry = max(0, int(getattr(args, "cde_retry", 0) or 0))
+    delay = max(0.0, float(getattr(args, "cde_retry_delay", 2.0) or 2.0))
+    cmd_by_name = {t["name"]: t["cmd"] for t in cde_tasks}
+
+    def _retry(names_to_rerun):
+        for _ in range(retry):
+            time.sleep(delay)  # rate-limit: avoid放大端点负载
+            for nm in names_to_rerun:
+                _cmd = cmd_by_name.get(nm)
+                if not _cmd:
+                    continue
+                try:
+                    run(_cmd)
+                    _RUN_STATUS["cde_retried"] += 1
+                except Exception:
+                    pass
+
+    def _flag_zero():
+        _RUN_STATUS["cde_zero_hit_unverified"] = True
+        print("[ct_registry][CDE-ZERO] ⚠️ CDE 重跑后仍 0 条，标记 zero_hit_unverified"
+              "（未经第三方复核，结果仅供参考）。")
+
     names = {t["name"] for t in cde_tasks}
-    if "CDE-zh" in names or "CDE-en" in names:
+    if "CDE-zh" in names and "CDE-en" not in names:
+        # 静默降级：只发了 zh 主查询；zh=0 时自动补发 en
+        zh = results.get("CDE-zh", (1, b"", False))
+        zh_ok = zh[0] == 0 and zh[2]
+        if zh_ok:
+            if _cde_count(cde_zh) > 0:
+                # zh 有结果，直接采用
+                if os.path.exists(cde_zh):
+                    shutil.copy2(cde_zh, cde_out)
+                norm_inputs += ["--cde", cde_out]
+                print("[ct_registry][i] CDE 中文检索完成。")
+            else:
+                # zh=0，静默降级：补发 en
+                print("[ct_registry][CDE-FALLBACK] 中文检索 0 条，静默补发英文检索。")
+                cde_en = os.path.join(args.out_dir, "cde_en.json")
+                try:
+                    run(_cde_single_cmd(args, cde_en, cde_kw, cde_script,
+                                        cde_src_args, cde_kw_flag))
+                except subprocess.CalledProcessError as e:
+                    _sd = _cp_stderr(e)
+                    if _is_timeout(_sd):
+                        print("[ct_registry][TIMEOUT] ⚠️ CDE 英文降级检索超时。")
+                        _flag_zero()
+                    else:
+                        print(f"[ct_registry][WARN] CDE 英文降级检索失败: {e}")
+                        _flag_zero()
+                except Exception:
+                    pass
+                # 合并 zh + en
+                if os.path.exists(cde_en):
+                    _bilingual_cde_merge(cde_zh, cde_en, cde_out)
+                if _cde_count(cde_out) > 0:
+                    norm_inputs += ["--cde", cde_out]
+                    print("[ct_registry][i] CDE 静默降级完成 (zh+en 已合并)。")
+                else:
+                    _flag_zero()
+        else:
+            print("[ct_registry][WARN] CDE 中文检索失败; 跳过。")
+    elif "CDE-zh" in names and "CDE-en" in names:
+        # 兼容旧路径：双检同时跑（保留备用）
         zh = results.get("CDE-zh", (1, b"", False))
         en = results.get("CDE-en", (1, b"", False))
         zh_ok = zh[0] == 0 and zh[2]
         en_ok = en[0] == 0 and en[2]
         if zh_ok and en_ok:
             _bilingual_cde_merge(cde_zh, cde_en, cde_out)
-            norm_inputs += ["--cde", cde_out]
-            print("[ct_registry][i] CDE 中英双检完成 (zh+en 已合并)。")
+            if _cde_count(cde_out) == 0 and retry > 0:
+                _retry(["CDE-zh", "CDE-en"])
+                _bilingual_cde_merge(cde_zh, cde_en, cde_out)
+            if _cde_count(cde_out) > 0:
+                norm_inputs += ["--cde", cde_out]
+                print("[ct_registry][i] CDE 中英双检完成 (zh+en 已合并)。")
+            else:
+                _flag_zero()
         else:
             print("[ct_registry][WARN] CDE 双语检索部分失败; 回退单语检索。")
-            single_out = cde_out
-            if not (zh_ok or en_ok):
-                try:
-                    run(_cde_single_cmd(args, cde_out, cde_kw, cde_script,
-                                        cde_src_args, cde_kw_flag))
-                except subprocess.CalledProcessError as e:
-                    _sd = _cp_stderr(e)
-                    if _is_timeout(_sd):
-                        print("[ct_registry][TIMEOUT] ⚠️ CDE 共享端点检索超时（外部网络故障，非技能问题）。")
-                        _print_timeout_advice("CDE（中国药物临床试验）")
-                        print("[ct_registry][TIMEOUT] 已跳过 CDE，继续后续流程（若其他源有数据仍可出报告）。")
-                    else:
-                        print(f"[ct_registry][WARN] CDE retrieval failed ({e}); continuing.")
-            else:
-                single_out = cde_zh if zh_ok else cde_en
+            single_out = cde_zh if zh_ok else (cde_en if en_ok else cde_out)
             if os.path.exists(single_out):
-                norm_inputs += ["--cde", single_out]
+                if single_out != cde_out:
+                    shutil.copy2(single_out, cde_out)
+                if _cde_count(cde_out) > 0:
+                    norm_inputs += ["--cde", cde_out]
+                else:
+                    _flag_zero()
     else:
         r = results.get("CDE", (1, b"", False))
         if r[0] == 0 and r[2]:
-            norm_inputs += ["--cde", cde_out]
-            if cde_path_type == "api_key":
-                print("[ct_registry][i] CDE 商业 API 快速路径检索完成 (~1-3s)。")
+            # P0-B: zero-hit retry on the single CDE output
+            if _cde_count(cde_out) == 0 and retry > 0:
+                _retry(["CDE"])
+                # fall back to a direct rerun if no stored cmd (api_key path)
+                if _cde_count(cde_out) == 0 and "CDE" not in cmd_by_name:
+                    try:
+                        run(_cde_single_cmd(args, cde_out, cde_kw, cde_script,
+                                            cde_src_args, cde_kw_flag))
+                        _RUN_STATUS["cde_retried"] += 1
+                    except Exception:
+                        pass
+            if _cde_count(cde_out) > 0:
+                norm_inputs += ["--cde", cde_out]
+                if cde_path_type == "api_key":
+                    print("[ct_registry][i] CDE 商业 API 快速路径检索完成 (~1-3s)。")
+                else:
+                    print("[ct_registry][i] CDE 检索完成。")
             else:
-                print("[ct_registry][i] CDE 检索完成。")
+                _flag_zero()
         else:
             if cde_path_type == "api_key":
                 # 商业接口直连失败（非共享端点问题），提示用户检查 key/网络
@@ -1255,17 +1455,13 @@ def _build_batch1(args, who_date_start, who_date_end, who_phase,
             has_filters = any([args.cde_indication, args.cde_drugs_name,
                                args.cde_drugs_type, args.cde_appliers,
                                args.cde_trial_status])
-            do_bilingual = (not args.no_cde_bilingual) and bool(zh_kw) and bool(en_kw) \
-                and zh_kw != en_kw and args.cde_mode == "search" and not has_filters
-            if do_bilingual:
+            # 静默降级：只发 zh 主查询；保留 en_kw 供 _interpret_cde 在 zh=0 时降级使用
+            if (not args.no_cde_bilingual) and bool(zh_kw) and bool(en_kw) \
+                and zh_kw != en_kw and args.cde_mode == "search" and not has_filters:
                 cde_zh = os.path.join(args.out_dir, "cde_zh.json")
-                cde_en = os.path.join(args.out_dir, "cde_en.json")
                 batch1.append({"name": "CDE-zh", "cmd": _cde_single_cmd(
                     args, cde_zh, zh_kw, cde_script, cde_src_args, cde_kw_flag),
                     "out": cde_zh})
-                batch1.append({"name": "CDE-en", "cmd": _cde_single_cmd(
-                    args, cde_en, en_kw, cde_script, cde_src_args, cde_kw_flag),
-                    "out": cde_en})
             else:
                 batch1.append({"name": "CDE", "cmd": _cde_single_cmd(
                     args, cde_out, cde_kw, cde_script, cde_src_args, cde_kw_flag),

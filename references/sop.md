@@ -38,7 +38,7 @@ python scripts/ct_registry.py --drug osimertinib --max 50 --run --out-dir ./out
 # 说明：--drug 既驱动 CT.gov 干预检索，也用于可选 PubChem 富集。
 ```
 
-### 3.4 加入中国 CDE 跨源合并（关键字中英文切换 + 确认门 + 中英双检）
+### 3.4 加入中国 CDE 跨源合并（关键字中英文切换 + 确认门 + 静默降级）
 
 `ct_registry.py` 会根据目标源**自动切换关键字语言**，你只需输入一个主检索词。切换分两阶段：
 
@@ -49,21 +49,22 @@ python scripts/ct_registry.py --drug osimertinib --max 50 --run --out-dir ./out
    - 重跑并加 `--confirm-cond` / `--confirm-intr` / `--confirm-drug` 传入确认译文。
    - （仅已知安全的自动化可加 `--auto-confirm` 跳过确认、直接用原文。）
 
-**CDE（国内）中英双检（默认开启）**：CDE 同时接受中英文，若关键字可派生出 (zh, en) 一对，
-技能会用**中文**和**英文**各搜一次 CDE 并合并去重（按 `registry_id`），覆盖以任一种语言登记的试验。
-加 `--no-cde-bilingual` 可关闭（退化成单次检索）。
+**CDE（国内）静默降级（默认开启，2026-08-11 更新）**：CDE 同时接受中英文，若关键字可派生出 (zh, en) 一对，
+技能先用**中文**检索 CDE；若中文返回 0 条且存在有效英文译文，则**自动用英文再查一次**并合并去重（按 `registry_id`），
+覆盖以任一种语言登记的试验。这取代了此前默认的中英并行双检（总是同时发两个 HTTP），在覆盖任一种语言登记试验的前提下，
+HTTP 调用数约减半。加 `--no-cde-bilingual` 可关闭（退化成单次检索）。
 
 ```bash
-# 中文主词：CT.gov 自动翻英文；CDE 自动用中文并中英双检
+# 中文主词：CT.gov 自动翻英文；CDE 自动用中文（中文 0 条时静默降级到英文）
 python scripts/ct_registry.py --cond "非小细胞肺癌" --with-cde --run --out-dir ./out
-# 英文主词：CT.gov 原样；CDE 关键词自动派生中文「非小细胞肺癌」并中英双检
+# 英文主词：CT.gov 原样；CDE 关键词自动派生中文「非小细胞肺癌」（中文 0 条时静默降级到英文）
 python scripts/ct_registry.py --cond "NSCLC" --with-cde --run --out-dir ./out
 # 词不在术语表 -> CT.gov 中止等待确认：
 python scripts/ct_registry.py --cond "某中文疾病名不在术语表" --with-cde --run --out-dir ./out
 #   -> 打印建议英文 + [ABORT]；确认后重跑：
 python scripts/ct_registry.py --cond "某中文疾病名不在术语表" --with-cde --run --out-dir ./out \
     --confirm-cond "confirmed english term"
-# 仍可用显式 --cde-keyword 覆盖自动派生（同样走中英双检）
+# 仍可用显式 --cde-keyword 覆盖自动派生（同样走静默降级）
 python scripts/ct_registry.py --cond "NSCLC" --with-cde --cde-keyword "奥希替尼" --run --out-dir ./out
 ```
 
@@ -84,12 +85,12 @@ python scripts/ct_registry.py --cond "NSCLC" --drug osimertinib --with-pubchem -
 | `--max` | `50` | 每源最大返回条数 |
 | `--with-pubchem` | off | 附加 PubChem 靶点/化合物富集（需 `--drug`） |
 | `--with-cde` | off | 附加中国 CDE 注册库（需 token；失败自动跳过） |
-| `--cde-keyword` / `--cde-multi-keywords` | — | CDE 关键词（multi_keyword 为空格分隔 AND）；**可省略**——省略时自动从 `--cond`/`--drug` 派生中文版（并走中英双检） |
+| `--cde-keyword` / `--cde-multi-keywords` | — | CDE 关键词（multi_keyword 为空格分隔 AND）；**可省略**——省略时自动从 `--cond`/`--drug` 派生中文版（并走静默降级） |
 | `--cde-mode` | `search` | `search` / `combined` / `multi_keyword`（带结构化过滤或 combined 时自动退化为单语检索） |
 | `--cde-indication` / `--cde-drugs-name` / `--cde-drugs-type` / `--cde-appliers` / `--cde-trial-status` | — | CDE 结构化过滤条件 |
 | `--confirm-cond` / `--confirm-intr` / `--confirm-drug` / `--confirm-cde-keyword` | — | 已确认译文（英/中），**跳过术语确认门**直接用，避免 CT.gov 因未命中术语表中止 |
 | `--auto-confirm` | off | 术语缺失时不中止、直接用原文（可能漏检）；仅已知安全的自动化使用 |
-| `--no-cde-bilingual` | off | 关闭 CDE 中英双检（默认开启） |
+| `--no-cde-bilingual` | off | 关闭 CDE 静默降级（默认开启） |
 | `--out-dir` | `./out` | 产出目录 |
 | `--run` | off | **必加**才真正联网；否则仅 PREVIEW |
 
@@ -108,7 +109,7 @@ python scripts/ct_registry.py --cond "NSCLC" --drug osimertinib --with-pubchem -
 ## 6. 典型工作流
 
 1. PREVIEW 确认 `--cond`/`--intr` 拼写 → 加 `--run` 出 `report.md`。
-2. 需要中国数据 → 加 `--with-cde`（确认 token 已落盘）；失败会告警并继续 CT.gov。关键字语言自动切换：中文主词直接给 CDE（中英双检）、英文主词自动翻中文给 CDE。若 CT.gov 关键字不在术语表，运行会中止等待确认译文（见 §3.4 / §7）。
+2. 需要中国数据 → 加 `--with-cde`（确认 token 已落盘）；失败会告警并继续 CT.gov。关键字语言自动切换：中文主词直接给 CDE（静默降级）、英文主词自动翻中文给 CDE（静默降级）。若 CT.gov 关键字不在术语表，运行会中止等待确认译文（见 §3.4 / §7）。
 3. 需要化合物靶点 → 加 `--with-pubchem --drug <名>`。
 4. 把 `report.md` 作为情报简报的「格局」维度，与 `ct-literature`(证据)、`ct-safety`(信号) 并列。
 
@@ -121,7 +122,7 @@ python scripts/ct_registry.py --cond "NSCLC" --drug osimertinib --with-pubchem -
 | 返回过多/无关 | 检索词过宽 | 同时给 `--cond` + `--intr`，或加 `--status` |
 | `[ct_registry][CONFIRM] … [ABORT] 未确认, 已停止检索` | CT.gov/PubChem 关键字不在术语表且语种不对 | 运行已中止、未联网；用建议英文重写参数，或加 `--confirm-cond/--confirm-intr/--confirm-drug` 传入确认译文后重跑 |
 | `[ct_registry][CONFIRM][CDE] …` | CDE 关键字不在术语表 | 非致命：CDE 同时支持中英文，仍直接用原文检索（双检也会尝试另一语言）；如需精确中文可加 `--confirm-cde-keyword` |
-| `[ct_registry][bilingual] CDE 中英双检合并: zh N + en M -> K 条` | CDE 中英双检生效 | 正常信息；K 为去重后合并条数 |
+| `[ct_registry][bilingual] CDE 中英双检合并: zh N + en M -> K 条` | CDE 静默降级生效（中文 0 条时自动补发英文） | 正常信息；K 为去重后合并条数 |
 | 想查「论文」却用本技能 | 用错技能 | 改用 `ct-literature` |
 
 ## 8. 本次修复记录

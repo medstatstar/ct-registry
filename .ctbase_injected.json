@@ -1,0 +1,18 @@
+{
+  "generated_by": "ct-base/scripts/publish_inject.py",
+  "ct_base": "C:\\Users\\WintoneFileSrv\\.workbuddy\\skills\\ct-base",
+  "files": [
+    "scripts/i18n.py",
+    "scripts/kw_localize.py",
+    "scripts/kw_lexicon.json",
+    "scripts/r_libs.py",
+    "scripts/drug_name_resolver.py",
+    "scripts/excel_style.py",
+    "scripts/keyword_breadth.py",
+    "scripts/source_guard.py",
+    "references/term_map.json",
+    "references/drug_name_map.json"
+  ],
+  "backups": [],
+  "timestamp": "2026-08-11T10:00:30.909125"
+}
