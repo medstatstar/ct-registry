@@ -18,10 +18,14 @@ config/usage.json
 # ── 本地归档：已废弃的独立 CDE Coze 端点（本地开发备查，不随包发布）──
 CDE/
 
+# ── 本地归档：离群/废弃模板与脚本（与发布技能无关，不随包发布）──
+_archived_orphans/
+
 # ── 本地归档：WHO/CDE 统一 Coze 工作流源码备份 + 技术文档（本地开发备查，不随包发布）──
 #    源自 project_20260809_163051.tar.gz（2026-08-09 导出）。同时覆盖 ct-base 约定的
 #    coze 接口文档（refiner_contract 等，BASE.md §16.7 强制排除，三平台均不打包）。
 coze/
+adapters/coze/
 
 # ── Runtime caches / downloaded outputs（not part of the skill）──
 __pycache__/
@@ -30,6 +34,8 @@ __pycache__/
 out_*/
 out/
 out_live/
+tests/
+scripts/tests/
 tests/out/
 tests/results/
 tests/*_run/

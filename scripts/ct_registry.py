@@ -63,6 +63,10 @@ import usage_guard
 import track_diff  # P0-A: local status diff / snapshot track (no network)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# §16.9: all outbound-calling wrappers live in adapters/ (one dedicated dir,
+# not scripts/). scripts/ is reserved for pure-local compute.
+SKILL_ROOT = os.path.dirname(HERE)
+ADAPTERS_DIR = os.path.join(SKILL_ROOT, "adapters")
 PY = sys.executable
 
 # --- P0-B run-status manifest (graceful-degradation disclosure) ----------
@@ -88,9 +92,10 @@ import kw_localize as kl
 # keyword_breadth is also a ct-base shared asset (vendored into this skill).
 try:
     from keyword_breadth import (is_broad_keyword, choose_primary_keyword,
-                                 plan_coze_keywords)
+                                 plan_coze_keywords, is_soft_broad)
 except Exception:  # noqa: BLE001  (vendored copy guaranteed in publish package)
     is_broad_keyword = choose_primary_keyword = plan_coze_keywords = None
+    is_soft_broad = None
 
 # Bilingual runtime prompts delegate to ct-base's shared i18n (EN default, ZH on
 # a zh-* OS). Only framework labels are localized; raw data values are not.
@@ -231,8 +236,10 @@ def _derive_kw(args, lang):
 
     Uses kw_localize to switch language; falls back to the raw term if the map
     misses (external sources are bilingual-friendly, so no abort gate here).
+
+    Priority: cond > drug > sponsor (sponsor 作为最后回退，适用于"查某公司试验"场景).
     """
-    base = args.cond or args.drug
+    base = args.cond or args.drug or args.sponsor
     if not base:
         return None
     v, st = kl.localize(base, lang)
@@ -347,6 +354,14 @@ def _kw_system_gate(args):
         return
     if all_cached and manifests:
         print("[ct_registry][KW] 命中会话缓存, 直接采用已确认关键字体系。")
+        _kw_inject_manifests(args, manifests)
+        return
+    # 非交互（agent 调用）防呆（2026-08-13）：stdin 非 TTY 时无法渲染菜单，
+    # 自动 adopt 已展开词集并继续（交互模式行为不变；显式 --no-expand / --kw-en / --kw-adopt 仍优先）
+    if not sys.stdin.isatty():
+        print("[ct_registry][KW] 非交互环境：自动采用已展开关键字体系（人工确认请用 --kw-adopt / --no-expand）。")
+        for _, _, m in manifests:
+            kl.cache_manifest(m, intent)
         _kw_inject_manifests(args, manifests)
         return
     # not confirmed -> show menu and STOP (no --run issued until user confirms)
@@ -481,8 +496,9 @@ def main():
     ap.add_argument("--with-cde", action="store_true",
                     help="also retrieve China CDE and merge into the landscape. PRIMARY path = "
                          "unified endpoint (search_ictrp.py --source chinadrugtrials -> "
-                         "ct-search.coze.site/run). Add --cde-legacy to use the standalone "
-                         "ct-searchcde.coze.site/run fallback instead.")
+                         "ct-search.coze.site/run). The legacy standalone CDE endpoint "
+                         "(ct-searchcde.coze.site/run) is RETIRED and archived under CDE/ "
+                         "(not shipped) -- do NOT use --cde-legacy.")
     ap.add_argument("--cde-keyword", help="CDE free keyword (or first term); required when --with-cde without --cde-multi-keywords")
     ap.add_argument("--cde-multi-keywords", help="CDE multi_keyword mode (space-separated AND terms)")
     ap.add_argument("--cde-mode", choices=["search", "combined", "multi_keyword"], default="search",
@@ -493,9 +509,9 @@ def main():
     ap.add_argument("--cde-appliers")
     ap.add_argument("--cde-trial-status", help="enum (11 values), e.g. 进行中/已完成")
     ap.add_argument("--cde-legacy", action="store_true",
-                    help="CDE 改用独立端点 ct-searchcde.coze.site/run（CDE/search_cde_workflow.py，本地归档、不随包发布）兜底，"
-                         "而非默认的统一端点 ct-search.coze.site/run（source=chinadrugtrials）。"
-                         "仅当统一端点异常时启用。")
+                    help="[已废弃] CDE 独立端点 (ct-searchcde.coze.site/run) 已于 2026-08-12 正式退役，"
+                         "相关代码已归档至 CDE/（不随包发布）。设置本开关仅打印废弃提示并改用统一端点 "
+                         "search_ictrp.py --source chinadrugtrials；请勿继续依赖。")
     ap.add_argument("--cde-api-key", help="CDE 商业 API key (opt-in; 走丁香园直连 ~1-3s, 无需 Coze token)。"
                          "有 key 时优先走快速路径，无 key 时保留现有 Coze workflow 路径。")
     # keyword localization control
@@ -530,6 +546,10 @@ def main():
                          "mirrors 14+ registries -- jRCT, DRKS, ANZCTR, ISRCTN, CTRI, ... -- "
                          "in one call")
     ap.add_argument("--ictrp-keyword", help="WHO ICTRP keyword override (else derived, EN)")
+    ap.add_argument("--who-timeout", type=int, default=90,
+                    help="WHO/ICTRP 检索等待超时（秒）。默认 90 = 快速失败（WHO 被挡/超慢时不阻塞，"
+                         "用 CT.gov + CDE 基座出结果）；传 300 恢复完整 5 分钟版（等待 WHO 全量返回）。"
+                         "透传给 search_ictrp.py --timeout。")
     ap.add_argument("--who-phase", help="WHO 高级检索 Phases 参数(逗号分隔, 如 'Phase 1,Phase 2,"
                          "Phase 1/Phase 2,Early Phase 1'); 透传给 search_ictrp.py --who-phase。"
                          "注意: 服务端 Phases 归一化字段较窄, 会漏掉部分联合期/数字期, "
@@ -541,13 +561,16 @@ def main():
                     help="WHO 检索模式：默认 search（自由文本）；combined = 高级检索（who_* 字段级 AND 过滤，"
                          "返回量更小、通常更快，适合超时兜底）。未显式指定但给了任一 --who-* 字段时自动转 combined。")
     ap.add_argument("--who-condition", help="WHO 高级检索：疾病/健康状况（对应 --cond）")
+    ap.add_argument("--allow-broad", action="store_true",
+                    help="允许宽关键词检索：静默 Tier-2 宽病类（糖尿病/高血压等）的 WARN 提示"
+                         "（不绕过最泛伞词的硬中止）。用于用户明确要某疾病领域的宽概览时。")
     ap.add_argument("--who-intervention", help="WHO 高级检索：干预/药物（对应 --drug/--intr）")
     ap.add_argument("--who-sponsor", help="WHO 高级检索：申办方")
     ap.add_argument("--who-country", help="WHO 高级检索：招募国家（逗号分隔）")
     ap.add_argument("--auto-confirm", action="store_true",
                     help="术语缺失时不中止, 直接用原文检索(可能漏检) -- 仅用于已知安全的自动化")
     ap.add_argument("--no-cde-bilingual", action="store_true",
-                    help="关闭 CDE 中英双检(默认开启: 同时用中文与英文关键字检索并合并)")
+                    help="关闭 CDE 中英静默降级（默认开启：中文检索 0 条时 Coze workflow 自动补发英文检索）")
     ap.add_argument("--with-detail", action="store_true",
                     help="检索后自动补结构化详情: CDE 跑 detail 模式拉 65 字段(合并 sponsor/phase/"
                          "入排/终点); EU-CTR 调 CTIS 文档端点抽取可下载文档链接。默认关。")
@@ -589,6 +612,10 @@ def main():
                     help="CDE 返回 0 条时的自动重跑次数（默认 1，限频）；仅 --run 联网时触发")
     ap.add_argument("--cde-retry-delay", type=float, default=2.0,
                     help="CDE 重跑之间的限频间隔秒数（默认 2.0，避免放大端点负载）")
+    # --- 机器可读摘要（2026-08-20：供 ct-advisor 编排器执行卡解析展示）---
+    ap.add_argument("--print-summary", action="store_true",
+                    help="cleanup 前把 landscape 摘要 JSON 打印到 stdout（供上层解析；"
+                         "详细清单仍写 out/report.xlsx）")
     args = ap.parse_args()
 
     # P0-A: pure-local diff is handled standalone (no network, no gates) and exits.
@@ -688,10 +715,10 @@ def main():
     # Confirm gate (foreign/CT.gov keywords not in term map); skipped if WHO covered.
     _confirm_foreign_gate(args, args.cond, intr, cond_st, intr_st, skip_covered)
 
-    if not skip_covered:
-        _run_ctgov(args, cond_v, intr_v, intr, cond_st, intr_st, args.out_dir, norm_inputs)
-    else:
-        print("[ct_registry][i] CT.gov 跳过 (已由 WHO 主路径覆盖, 转备用)。")
+    # CT.gov 基座无条件先行（2026-08-13）：Tier-1 免费直连、零共享配额、秒级返回且数据比
+    # WHO/ICTRP 实时——即使 WHO 成功（skip_covered）也保留 CT.gov 作实时基座与交叉验证；
+    # normalize/aggregate 按 registry_id 自动去重，不会重复。
+    _run_ctgov(args, cond_v, intr_v, intr, cond_st, intr_st, args.out_dir, norm_inputs)
 
     # --- CDE retrieval now runs inside the parallel Batch-1 block (above) ---
     # (kept here only as a structural marker; CDE is always independent of WHO)
@@ -720,12 +747,20 @@ def main():
     _run_tier2_fallback(args, skip_covered, force_all, norm_inputs,
                         extra_tasks=([cde_fb] if cde_fb else None))
 
+    # --- Coze 源自动详情 (--with-detail): WHO/ISRCTN/DRKS/ChiCTR 对称覆盖 ---
+    # 复用列表输出已保留的 project_list_raw 走统一端点 detail（与列表同 demand_id
+    # 去重，只计 1 次配额）。WHO 后端已实现 detail（who_scrape_details_node）；
+    # ISRCTN/DRKS/ChiCTR 若后端未实现 detail 会空返回 → 降级保留列表并提示
+    # （见 coze/src_backup/AGENTS.md —— detail 路由仅覆盖 chinadrugtrials + who）。
+    if args.with_detail:
+        _run_coze_autodetail(args, norm_inputs, run)
+
     # --- EU-CTR document enrichment (--with-detail): pull download URLs from CTIS ---
     euctr = os.path.join(args.out_dir, "euctr.json")
     if (args.with_euctr or force_all) and args.with_detail and os.path.exists(euctr):
         euctr_docs = os.path.join(args.out_dir, "euctr_docs.json")
         try:
-            run([PY, os.path.join(HERE, "fetch_eu_ctr_docs.py"), "--run",
+            run([PY, os.path.join(ADAPTERS_DIR, "fetch_eu_ctr_docs.py"), "--run",
                  "--in", euctr, "--out", euctr_docs])
             if os.path.exists(euctr_docs):
                 for i, v in enumerate(norm_inputs):
@@ -760,7 +795,7 @@ def main():
     # --- confirm-gated document download (--download-docs = explicit user confirmation) ---
     if args.download_docs:
         docs_out = os.path.join(args.out_dir, "docs")
-        run([PY, os.path.join(HERE, "download_docs.py"), "--in", normalized,
+        run([PY, os.path.join(ADAPTERS_DIR, "download_docs.py"), "--in", normalized,
              "--out-dir", docs_out, "--yes"])
 
     # --- optional PubChem enrich (needs ENGLISH drug name) ---
@@ -774,7 +809,7 @@ def main():
                   f"建议英文译文: {sug or '<请提供>'}。"
                   f" 用 --confirm-drug 传入确认译文后重跑。")
         pc = os.path.join(args.out_dir, "pubchem.json")
-        run([PY, os.path.join(HERE, "enrich_pubchem.py"), "--run", "--drug", drug_v,
+        run([PY, os.path.join(ADAPTERS_DIR, "enrich_pubchem.py"), "--run", "--drug", drug_v,
              "--targets", "--out", pc])
 
     # --- optional year filter (--min-year, built-in) ---
@@ -796,11 +831,65 @@ def main():
         print(f"[ct_registry][excel] 已生成 -> {xlsx_out}")
 
     # --- cleanup intermediate md/json (default; keep only .xlsx) ---
+    if args.print_summary:
+        _print_summary(args, agg)
     if args.excel and not args.keep_meta:
         _cleanup_meta(args.out_dir)
         print("[ct_registry][cleanup] 已清理中间 md/json, 仅保留 .xlsx。")
 
     print(f"[ct_registry] done -> {args.out_dir}")
+
+
+def _print_summary(args, agg_path):
+    """把 landscape 摘要以 JSON 打印到 stdout（cleanup 前，供编排器/执行卡解析）。
+
+    2026-08-20：ct-advisor 编排器执行卡此前只能拿到过程日志（total=N），
+    README 示例 2「返回归一化 landscape」不成立；本函数输出结构化摘要
+    （n_trials + phase/region/sponsor 分布），handle_need_tool._extract_json
+    可解析合并进最终答案。
+    """
+    try:
+        import json as _json
+        from collections import Counter as _Counter
+        with open(agg_path, encoding="utf-8") as _f:
+            _agg = _json.load(_f)
+        _ds = _agg.get("dedup_summary") or {}
+        _safety = _agg.get("fda_events") or {}
+        # 分布统计（normalized.json 在 cleanup 前存在）
+        _ph, _rg, _sp = _Counter(), _Counter(), _Counter()
+        try:
+            with open(os.path.join(args.out_dir, "normalized.json"), encoding="utf-8") as _f2:
+                _norm = _json.load(_f2)
+            for _r in (_norm or []):
+                _ph[_r.get("phase") or "unknown"] += 1
+                for _c in (_r.get("countries") or []):
+                    _rg[_c or "unknown"] += 1
+                _sp[(_r.get("sponsor") or "unknown")[:32]] += 1
+        except Exception:
+            pass
+
+        def _top(c, n=5):
+            return [{"k": k, "n": v} for k, v in c.most_common(n)]
+
+        print(_json.dumps({
+            "tool": "ct-registry",
+            "status": "ok",
+            "landscape": {
+                "n_trials": _ds.get("deduped_total") or _ds.get("groups"),
+                "raw_total": _ds.get("raw_total"),
+                "removed_duplicates": _ds.get("removed"),
+                "cross_source_groups": _ds.get("cross_source_groups"),
+                "phase_mix": _top(_ph),
+                "region_mix": _top(_rg),
+                "top_sponsors": _top(_sp),
+                "safety_match": _safety.get("matched") if isinstance(_safety, dict) else None,
+            },
+            "excel": os.path.join(args.out_dir, "report.xlsx"),
+            "note": "完整试验清单（名称/阶段/地区/申办方）见 report.xlsx",
+        }, ensure_ascii=False))
+    except Exception as _e:  # noqa: BLE001
+        print(_json.dumps({"tool": "ct-registry", "status": "error",
+                           "message": f"summary 生成失败: {_e}"}, ensure_ascii=False))
 
 
 def _run_tier2_fallback(args, skip_covered, force_all, norm_inputs, extra_tasks=None):
@@ -838,10 +927,10 @@ def _run_tier2_fallback(args, skip_covered, force_all, norm_inputs, extra_tasks=
             continue
         _out = os.path.join(args.out_dir, f"{_sl}.json")
         if _ep:
-            _cmd = [PY, os.path.join(HERE, "search_ictrp.py"), "--run",
+            _cmd = [PY, os.path.join(ADAPTERS_DIR, "search_ictrp.py"), "--run",
                     "--source", _api, "--q", _kw, "--out", _out]
         else:
-            _cmd = [PY, os.path.join(HERE, "search_eu_ctr.py"), "--run",
+            _cmd = [PY, os.path.join(ADAPTERS_DIR, "search_eu_ctr.py"), "--run",
                     "--q", _kw, "--out", _out]
         tasks.append({"name": _SRC, "cmd": _cmd, "out": _out,
                       "src_l": _sl, "is_ep": _ep})
@@ -887,7 +976,7 @@ def _run_cde_detail(cde_list, cde_detail, cde_script, cde_src_args, here, run, a
     """Fetch full CDE detail records (65 fields) and return the detail path.
 
     Runs mode=detail against the SAME CDE script used for the list search (unified
-    endpoint by default, standalone fallback with --cde-legacy). Respects the
+    endpoint by default; the retired standalone CDE endpoint is archived under CDE/). Respects the
     skill's >100-items confirmation rule: a large list would be a slow 8-thread
     parallel fetch, so we skip auto-detail unless --auto-confirm is set.
 
@@ -917,19 +1006,110 @@ def _run_cde_detail(cde_list, cde_detail, cde_script, cde_src_args, here, run, a
     return cde_detail
 
 
+def _run_coze_detail(list_path, detail_out, label, api_source, run, args):
+    """Fetch detail records for a Coze-endpoint source (WHO/ISRCTN/DRKS/ChiCTR)
+    via the unified endpoint (search_ictrp.py --source <api_source> --mode detail).
+
+    Mirrors _run_cde_detail's guards: >100-item lists skip auto-detail unless
+    --auto-confirm; a 0-record / timed-out detail response falls back to the list
+    (never swap an empty detail over a good list).
+
+    Returns the detail output path on success, or None to keep the list-only file.
+    """
+    try:
+        with open(list_path, encoding="utf-8") as f:
+            lst = json.load(f)
+        recs = lst.get("records") or lst.get("projects") or []
+        n = len(recs)
+    except Exception:
+        n = 0
+    if n == 0:
+        print(f"[ct_registry][DETAIL-SKIP] {label} 列表为空，跳过自动详情。")
+        return None
+    if n > 100 and not args.auto_confirm:
+        print(f"[ct_registry][DETAIL-SKIP] {label} 列表 {n} 条 >100, detail 拉取耗时长, "
+              f"跳过自动补详情(可加 --auto-confirm 强制, 或单独跑 detail 模式)。")
+        return None
+    try:
+        run([PY, os.path.join(ADAPTERS_DIR, "search_ictrp.py"), "--run",
+             "--source", api_source, "--out", detail_out,
+             "--mode", "detail", "--project-list", list_path])
+    except subprocess.CalledProcessError as e:
+        print(f"[ct_registry][WARN] {label} detail fetch failed ({e}); using list-only.")
+        return None
+    if not os.path.exists(detail_out):
+        return None
+    # Safety: never swap an empty / timed-out detail over a good list.
+    try:
+        with open(detail_out, encoding="utf-8") as f:
+            det = json.load(f)
+        drecs = det.get("records") or det.get("projects") or []
+        if det.get("is_timeout") or not drecs:
+            print(f"[ct_registry][DETAIL-EMPTY] {label} detail 返回 {len(drecs)} 条"
+                  + ("（超时）" if det.get("is_timeout") else "")
+                  + "，已保留列表。若后端未实现该源 detail 模式"
+                    "（coze 工作流源码 detail 节点仅覆盖 chinadrugtrials + who，"
+                    "见 coze/src_backup/AGENTS.md），需在 Coze 平台扩展后才有详情。")
+            return None
+    except Exception:
+        return None
+    print(f"[ct_registry][DETAIL] {label} 详情已合并到归一化({detail_out})。")
+    return detail_out
+
+
+def _swap_norm_input(norm_inputs, flag, new_path):
+    """Replace the path following `flag` in the flat norm_inputs list (in place)."""
+    for i, v in enumerate(norm_inputs):
+        if v == flag and i + 1 < len(norm_inputs):
+            norm_inputs[i + 1] = new_path
+            return True
+    return False
+
+
+def _run_coze_autodetail(args, norm_inputs, run):
+    """--with-detail: symmetric auto-detail for ALL Coze-endpoint sources already
+    present in norm_inputs (WHO ICTRP / ISRCTN / DRKS / ChiCTR), not just CDE.
+
+    The set is derived from norm_inputs itself (--ictrp / --isrctn / --drks /
+    --chictr), so skipped / failed / fallback decisions made upstream (skip_covered,
+    force_all, timeout) are respected automatically. Same demand_id -> DEMAND-BASED
+    DEDUP charges the detail calls together with the list as 1 quota.
+    """
+    flags = [("--ictrp", "who", "WHO ICTRP"),
+             ("--isrctn", "isrctn", "ISRCTN"),
+             ("--drks", "drks", "DRKS"),
+             ("--chictr", "chictr", "ChiCTR")]
+    for flag, api_source, label in flags:
+        path = None
+        for i, v in enumerate(norm_inputs):
+            if v == flag and i + 1 < len(norm_inputs):
+                path = norm_inputs[i + 1]
+                break
+        if not path or not os.path.exists(path):
+            continue
+        detail_out = os.path.join(args.out_dir, f"{api_source}_detail.json")
+        det = _run_coze_detail(path, detail_out, label, api_source, run, args)
+        if det:
+            _swap_norm_input(norm_inputs, flag, det)
+
+
 def _cde_script_and_flag(args):
     """Resolve the CDE search script + source args + keyword flag.
 
     FAST PATH (--cde-api-key given) = direct commercial API (search_cde.py --api-key, ~1-3s).
     PRIMARY = unified endpoint (search_ictrp.py --source chinadrugtrials, ~15-60s).
-    FALLBACK = standalone endpoint (search_cde_workflow.py, archived under CDE/) when --cde-legacy.
+    The standalone CDE endpoint (search_cde_workflow.py, archived under CDE/) was
+    RETIRED on 2026-08-12 -- --cde-legacy is now a no-op that warns and routes to the
+    unified endpoint. Do NOT revive it.
     """
     if args.cde_api_key:
         # 快速路径：商业接口直连，不走 Coze workflow
-        return os.path.join(HERE, "search_cde.py"), [], "--q", "api_key"
+        return os.path.join(ADAPTERS_DIR, "search_cde.py"), [], "--q", "api_key"
     if args.cde_legacy:
-        return os.path.join(HERE, "..", "CDE", "search_cde_workflow.py"), [], "--keyword", "workflow"
-    return os.path.join(HERE, "search_ictrp.py"), ["--source", "chinadrugtrials"], "--q", "workflow"
+        print("[ct_registry][DEPRECATED] --cde-legacy 已废弃：CDE 独立端点 "
+              "(ct-searchcde.coze.site/run) 已于 2026-08-12 正式退役并归档至 CDE/。"
+              "已自动改用统一端点 search_ictrp.py --source chinadrugtrials。")
+    return os.path.join(ADAPTERS_DIR, "search_ictrp.py"), ["--source", "chinadrugtrials"], "--q", "workflow"
 
 
 def _cde_single_cmd(args, out, cde_kw, cde_script, cde_src_args, cde_kw_flag):
@@ -939,10 +1119,12 @@ def _cde_single_cmd(args, out, cde_kw, cde_script, cde_src_args, cde_kw_flag):
         cmd += ["--mode", "combined", cde_kw_flag, cde_kw]
     else:
         cmd += ["--mode", "search", cde_kw_flag, cde_kw]
+    # --sponsor 自动映射到 CDE --appliers（申办方字段），仅当未显式指定 --cde-appliers 时
+    appliers = args.cde_appliers or args.sponsor
     for cli, val in [("--indication", args.cde_indication),
                      ("--drugs-name", args.cde_drugs_name),
                      ("--drugs-type", args.cde_drugs_type),
-                     ("--appliers", args.cde_appliers),
+                     ("--appliers", appliers),
                      ("--trial-status", args.cde_trial_status)]:
         if val:
             cmd += [cli, val]
@@ -957,7 +1139,7 @@ def _cde_api_key_cmd(args, out, cde_kw, cde_mk):
     """
     if not args.cde_api_key:
         return None
-    cmd = [PY, os.path.join(HERE, "search_cde.py"), "--run",
+    cmd = [PY, os.path.join(ADAPTERS_DIR, "search_cde.py"), "--run",
            "--api-key", args.cde_api_key, "--out", out,
            "--max", str(args.max)]
     if cde_mk:
@@ -984,7 +1166,7 @@ def _derive_cde_kw(args):
     cde_mk = args.cde_multi_keywords
     cde_st = "confirmed" if cde_kw else None
     if not (cde_kw or cde_mk):
-        base = args.confirm_cde_keyword or args.cond or args.drug
+        base = args.confirm_cde_keyword or args.cond or args.drug or args.sponsor
         if base:
             cde_kw, cde_st = kl.localize(base, "zh")
             if cde_st == "miss":
@@ -1020,14 +1202,18 @@ def _guard_keyword_breadth(args):
       - **只有一个关键词且过宽**（Coze 完整翻页源：CDE/WHO/ChiCTR/ISRCTN/DRKS）：
         直接停止检索，要求用户缩小关键词范围。
       - **CT.gov**（受 --max 上限约束、不会全量翻千页）：仅 WARN，不中止。
+      - **Tier-2 宽病类**（糖尿病/高血压等，2026-08-12 新增）：仅 WARN、不中止
+        （用户可能要某疾病领域的宽概览）；加 --allow-broad 可静默此提示。
 
-    Coze 检索源命中「单关键词过宽」时 sys.exit(2)；CT.gov 仅打印 WARN。
+    Coze 检索源命中「单关键词过宽」时 sys.exit(2)；CT.gov 与 Tier-2 仅打印 WARN。
     """
+    _allow_broad = bool(getattr(args, "allow_broad", False))
     if is_broad_keyword is None:  # 底座未就绪时跳过（不应发生）
         return
 
     abort_sources = []  # [(源名, 过宽主词), ...]
     warns = []
+    soft_warns = []  # [(源名, 软宽词), ...]  Tier-2 宽病类，仅警告不中止
 
     # ---- CDE（中国药物临床试验，Coze 统一端点，会完整翻页） ----
     if args.with_cde:
@@ -1046,12 +1232,16 @@ def _guard_keyword_breadth(args):
             kw = args.cde_keyword or args.confirm_cde_keyword or args.cond or args.drug
             if kw and is_broad_keyword(kw):
                 abort_sources.append(("CDE(中国药物临床试验)", kw))
+            elif kw and is_soft_broad and is_soft_broad(kw) and not _allow_broad:
+                soft_warns.append(("CDE(中国药物临床试验)", kw))
 
     # ---- WHO ICTRP（Coze 统一端点，会完整翻页） ----
     if args.with_ictrp:
         kw = args.ictrp_keyword or _derive_kw(args, "en")
         if kw and is_broad_keyword(kw):
             abort_sources.append(("WHO ICTRP", kw))
+        elif kw and is_soft_broad and is_soft_broad(kw) and not _allow_broad:
+            soft_warns.append(("WHO ICTRP", kw))
 
     # ---- 国家级 Coze 端点（ISRCTN / DRKS / ChiCTR） ----
     for _sl, _lang in (("isrctn", "en"), ("drks", "en"), ("chictr", "zh")):
@@ -1059,6 +1249,8 @@ def _guard_keyword_breadth(args):
             kw = getattr(args, f"{_sl}_keyword", None) or _derive_kw(args, _lang)
             if kw and is_broad_keyword(kw):
                 abort_sources.append((_sl.upper(), kw))
+            elif kw and is_soft_broad and is_soft_broad(kw) and not _allow_broad:
+                soft_warns.append((_sl.upper(), kw))
 
     # ---- CT.gov（受 --max 上限约束，仅 WARN） ----
     ctgov_kw = _derive_kw(args, "en")
@@ -1069,14 +1261,22 @@ def _guard_keyword_breadth(args):
         print(f"[ct_registry][WARN] CT.gov 关键词 {w!r} 可能过宽（结果量大）；"
               f"CT.gov 受 --max 上限约束不会全量抓取，但建议加限定词缩小范围。")
 
+    for _name, _kw in soft_warns:
+        print(f"[ct_registry][WARN] {_name} 主词 {_kw!r} 属宽病类（如糖尿病/高血压），"
+              f"单独检索可能仅取回部分结果（统一网关 ~5 分钟硬墙）。已继续执行，"
+              f"但建议缩小关键词或改用 --mode combined 字段过滤；加 --allow-broad 可静默此提示。")
+
     if abort_sources:
         print("[ct_registry][ABORT] 以下 Coze 检索源的主关键词过于宽泛，"
               "结果可能超过千页、无法完整抓取：")
         for _name, _kw in abort_sources:
             print(f"  - {_name}: 主词 {_kw!r}")
-        print("请缩小关键词范围后再检索：① 用更具体的疾病/药物/分期限定词；"
-              "② 多关键词组合检索时把具体词放在最前（作主词）；"
-              "③ 或用 --confirm-* / --*-keyword 显式指定具体检索词后重跑。")
+        print("可选方案：\n"
+              "  ① 缩小关键词范围（更具体的疾病/药物/分期）；\n"
+              "  ② 多关键词组合检索时把具体词放在最前（作主词）；\n"
+              "  ③ 改用高级检索模式（WHO: --who-mode combined --who-condition/--who-intervention；"
+              "CDE: --cde-mode combined --indication/--drugs-name 等字段组合）；\n"
+              "  ④ 用 --confirm-* / --*-keyword 显式指定具体检索词后重跑。")
         sys.exit(2)
 
 
@@ -1088,7 +1288,8 @@ def _run_one(task):
     """
     name, cmd, out = task["name"], task["cmd"], task.get("out")
     try:
-        p = subprocess.run(cmd, capture_output=True)
+        # 实时透传子进程 stdout（如 BREADTH/PARTIAL 警告），stderr 仍捕获供诊断。
+        p = subprocess.run(cmd, stdout=None, stderr=subprocess.PIPE)
         exists = os.path.exists(out) if out else True
         return name, p.returncode, p.stderr, exists
     except Exception as e:  # defensive: never raise from a worker thread
@@ -1151,22 +1352,26 @@ def _who_cmd(args, out, who_date_start, who_date_end, who_phase):
     ictrp_kw = args.ictrp_keyword or _derive_kw(args, "en")
     if not ictrp_kw:
         return None
-    # 高级检索触发条件：显式 --who-mode combined，或给了任一 --who-* 字段
+    # 高级检索触发条件：显式 --who-mode combined，或给了任一 --who-* 字段，或有 --sponsor
+    has_sponsor = bool(getattr(args, "sponsor", None)) or bool(getattr(args, "who_sponsor", None))
     use_advanced = (getattr(args, "who_mode", None) == "combined") or any(
         getattr(args, a, None) for a in ("who_condition", "who_intervention",
-                                         "who_sponsor", "who_country"))
-    cmd = [PY, os.path.join(HERE, "search_ictrp.py"), "--run", "--out", out]
+                                         "who_sponsor", "who_country")) or has_sponsor
+    cmd = [PY, os.path.join(ADAPTERS_DIR, "search_ictrp.py"), "--run", "--out", out]
+    # WHO 等待超时（--who-timeout）：默认 90s 快速失败，可传 300 恢复完整 5 分钟版
+    cmd += ["--timeout", str(getattr(args, "who_timeout", 90))]
     if use_advanced:
         cmd += ["--mode", "combined"]
         cond = getattr(args, "who_condition", None) or getattr(args, "cond", None)
         intr = getattr(args, "who_intervention", None) or getattr(args, "drug", None) \
             or getattr(args, "intr", None)
+        sp = getattr(args, "who_sponsor", None) or getattr(args, "sponsor", None)
         if cond:
             cmd += ["--who-condition", cond]
         if intr:
             cmd += ["--who-intervention", intr]
-        if getattr(args, "who_sponsor", None):
-            cmd += ["--who-sponsor", args.who_sponsor]
+        if sp:
+            cmd += ["--who-sponsor", sp]
         if getattr(args, "who_country", None):
             cmd += ["--who-country", args.who_country]
     else:
@@ -1274,6 +1479,9 @@ def _interpret_cde(results, cde_tasks, cde_out, cde_zh, cde_en, cde_kw,
     cde_path_type: "api_key" → commercial API path (fast, no Coze); "workflow" → Coze.
     Handles bilingual (CDE-zh / CDE-en) merge and single-run fallback.
 
+    静默降级逻辑已上移至 Coze workflow（search_node.py）：workflow 在 zh=0 时自动补发 en 检索并合并。
+    客户端直接使用结果即可，不再在本地做降级处理。
+
     P0-B graceful degradation: if CDE returns 0 records (a *successful but empty*
     pull — exit 0, file written), auto-rerun ``--cde-retry`` times, rate-limited
     by ``--cde-retry-delay`` to avoid放大端点负载. If it is STILL 0 after the
@@ -1306,41 +1514,18 @@ def _interpret_cde(results, cde_tasks, cde_out, cde_zh, cde_en, cde_kw,
 
     names = {t["name"] for t in cde_tasks}
     if "CDE-zh" in names and "CDE-en" not in names:
-        # 静默降级：只发了 zh 主查询；zh=0 时自动补发 en
+        # 静默降级逻辑已上移至 Coze workflow（search_node.py）
+        # workflow 在 zh=0 时自动补发 en 检索并合并，客户端直接使用结果即可
         zh = results.get("CDE-zh", (1, b"", False))
         zh_ok = zh[0] == 0 and zh[2]
         if zh_ok:
-            if _cde_count(cde_zh) > 0:
-                # zh 有结果，直接采用
-                if os.path.exists(cde_zh):
-                    shutil.copy2(cde_zh, cde_out)
+            if os.path.exists(cde_zh):
+                shutil.copy2(cde_zh, cde_out)
+            if _cde_count(cde_out) > 0:
                 norm_inputs += ["--cde", cde_out]
-                print("[ct_registry][i] CDE 中文检索完成。")
+                print("[ct_registry][i] CDE 中文检索完成（含可能的静默降级，详见 Coze log）。")
             else:
-                # zh=0，静默降级：补发 en
-                print("[ct_registry][CDE-FALLBACK] 中文检索 0 条，静默补发英文检索。")
-                cde_en = os.path.join(args.out_dir, "cde_en.json")
-                try:
-                    run(_cde_single_cmd(args, cde_en, cde_kw, cde_script,
-                                        cde_src_args, cde_kw_flag))
-                except subprocess.CalledProcessError as e:
-                    _sd = _cp_stderr(e)
-                    if _is_timeout(_sd):
-                        print("[ct_registry][TIMEOUT] ⚠️ CDE 英文降级检索超时。")
-                        _flag_zero()
-                    else:
-                        print(f"[ct_registry][WARN] CDE 英文降级检索失败: {e}")
-                        _flag_zero()
-                except Exception:
-                    pass
-                # 合并 zh + en
-                if os.path.exists(cde_en):
-                    _bilingual_cde_merge(cde_zh, cde_en, cde_out)
-                if _cde_count(cde_out) > 0:
-                    norm_inputs += ["--cde", cde_out]
-                    print("[ct_registry][i] CDE 静默降级完成 (zh+en 已合并)。")
-                else:
-                    _flag_zero()
+                _flag_zero()
         else:
             print("[ct_registry][WARN] CDE 中文检索失败; 跳过。")
     elif "CDE-zh" in names and "CDE-en" in names:
@@ -1455,13 +1640,14 @@ def _build_batch1(args, who_date_start, who_date_end, who_phase,
             has_filters = any([args.cde_indication, args.cde_drugs_name,
                                args.cde_drugs_type, args.cde_appliers,
                                args.cde_trial_status])
-            # 静默降级：只发 zh 主查询；保留 en_kw 供 _interpret_cde 在 zh=0 时降级使用
+            # 静默降级：只发 zh 主查询；降级逻辑已上移至 Coze workflow（search_node.py）
+            # 客户端只需把 fallback_keyword（en_kw）传给 workflow，由 workflow 在 zh=0 时自动补发
             if (not args.no_cde_bilingual) and bool(zh_kw) and bool(en_kw) \
                 and zh_kw != en_kw and args.cde_mode == "search" and not has_filters:
                 cde_zh = os.path.join(args.out_dir, "cde_zh.json")
-                batch1.append({"name": "CDE-zh", "cmd": _cde_single_cmd(
-                    args, cde_zh, zh_kw, cde_script, cde_src_args, cde_kw_flag),
-                    "out": cde_zh})
+                cmd = _cde_single_cmd(args, cde_zh, zh_kw, cde_script, cde_src_args, cde_kw_flag)
+                cmd += ["--silent-fallback", "--fallback-keyword", en_kw]
+                batch1.append({"name": "CDE-zh", "cmd": cmd, "out": cde_zh})
             else:
                 batch1.append({"name": "CDE", "cmd": _cde_single_cmd(
                     args, cde_out, cde_kw, cde_script, cde_src_args, cde_kw_flag),
@@ -1586,7 +1772,7 @@ def _run_ctgov(args, cond_v, intr_v, intr, cond_st, intr_st, out_dir, norm_input
     if intr and intr_st == "term_map":
         print(f"[ct_registry][i18n] CT.gov (en): {intr!r} -> {intr_v!r}")
     ctgov = os.path.join(out_dir, "ctgov.json")
-    cmd = [PY, os.path.join(HERE, "search_ctgov.py"), "--run"]
+    cmd = [PY, os.path.join(ADAPTERS_DIR, "search_ctgov.py"), "--run"]
     if args.ctgov_api_key:
         # 快速路径：Session 连接池 + 大 pageSize + 并发分页
         cmd += ["--fast", "--page-size", str(max(args.max, 500))]

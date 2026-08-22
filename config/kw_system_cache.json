@@ -1,0 +1,151 @@
+{
+  "ace633f89bbc3c00cb95451b521b5fa4": {
+    "base": "司美格鲁肽",
+    "intent": "disease",
+    "zh": [
+      "司美格鲁肽"
+    ],
+    "en": [
+      "semaglutide"
+    ],
+    "per_source": {
+      "ctgov": {
+        "lang": "en",
+        "keywords": [
+          "semaglutide"
+        ],
+        "note": "精确匹配 → 类别/靶点族枚举具体药名；裸类别易漏"
+      },
+      "who": {
+        "lang": "en",
+        "keywords": [
+          "semaglutide"
+        ],
+        "note": "同 CT.gov；结构化须填具体药名"
+      },
+      "cde": {
+        "lang": "zh",
+        "keywords": [
+          "司美格鲁肽"
+        ],
+        "note": "子串匹配，多词兜底"
+      },
+      "chictr": {
+        "lang": "zh",
+        "keywords": [
+          "司美格鲁肽"
+        ],
+        "note": "子串匹配，多词兜底"
+      }
+    },
+    "risks": [
+      "未识别为药物类别，按疾病/干预词直接中英互译检索"
+    ],
+    "confidence": {
+      "term_map": [
+        "semaglutide",
+        "司美格鲁肽"
+      ],
+      "alias": [],
+      "class_enum": [],
+      "speculative": []
+    }
+  },
+  "1632e38dbf9946d8ecd89c621af1283d": {
+    "base": "semaglutide",
+    "intent": "disease",
+    "zh": [
+      "司美格鲁肽"
+    ],
+    "en": [
+      "semaglutide"
+    ],
+    "per_source": {
+      "ctgov": {
+        "lang": "en",
+        "keywords": [
+          "semaglutide"
+        ],
+        "note": "精确匹配 → 类别/靶点族枚举具体药名；裸类别易漏"
+      },
+      "who": {
+        "lang": "en",
+        "keywords": [
+          "semaglutide"
+        ],
+        "note": "同 CT.gov；结构化须填具体药名"
+      },
+      "cde": {
+        "lang": "zh",
+        "keywords": [
+          "司美格鲁肽"
+        ],
+        "note": "子串匹配，多词兜底"
+      },
+      "chictr": {
+        "lang": "zh",
+        "keywords": [
+          "司美格鲁肽"
+        ],
+        "note": "子串匹配，多词兜底"
+      }
+    },
+    "risks": [
+      "未识别为药物类别，按疾病/干预词直接中英互译检索"
+    ],
+    "confidence": {
+      "term_map": [
+        "semaglutide",
+        "司美格鲁肽"
+      ],
+      "alias": [],
+      "class_enum": [],
+      "speculative": []
+    }
+  },
+  "13835b6f29a269e5f2137e08b6972bd4": {
+    "base": "GLP-1 RA",
+    "intent": "intervention",
+    "zh": [],
+    "en": [
+      "glp-1 ra"
+    ],
+    "per_source": {
+      "ctgov": {
+        "lang": "en",
+        "keywords": [
+          "glp-1 ra"
+        ],
+        "note": "精确匹配 → 类别/靶点族枚举具体药名；裸类别易漏"
+      },
+      "who": {
+        "lang": "en",
+        "keywords": [
+          "glp-1 ra"
+        ],
+        "note": "同 CT.gov；结构化须填具体药名"
+      },
+      "cde": {
+        "lang": "zh",
+        "keywords": [],
+        "note": "子串匹配，多词兜底"
+      },
+      "chictr": {
+        "lang": "zh",
+        "keywords": [],
+        "note": "子串匹配，多词兜底"
+      }
+    },
+    "risks": [
+      "未识别为药物类别，按疾病/干预词直接中英互译检索"
+    ],
+    "confidence": {
+      "term_map": [
+        "glp-1 ra"
+      ],
+      "alias": [],
+      "class_enum": [],
+      "speculative": []
+    }
+  }
+}

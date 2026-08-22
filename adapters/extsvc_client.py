@@ -5,7 +5,7 @@ WHY THIS EXISTS (architecture decision 2026-07-24):
   The ct-registry design rule is: NO local Playwright / headless browser. When a
   registry has no clean HTTP API (ISRCTN's query API returns 404; DRKS search is
   JS/redirect-based; ChiCTR has no public API), we delegate retrieval to an external
-  workflow endpoint (the same Coze /run pattern already used by the archived
+  workflow endpoint (the same Coze /run pattern already used by the archived / RETIRED 2026-08-12
   CDE/search_cde_workflow.py for China CDE). This module holds the shared machinery so each such source is a thin
   wrapper instead of 400 lines of duplication.
 
@@ -21,7 +21,7 @@ CONTRACT (mirrors CDE):
     > embedded public blob in `config/keys.py` (XOR+base64, shipped with the package).
     Public shared Coze workload-identity token; embedded per ct-base §5.239 / §5.243 so
     the published package works out-of-the-box (SkillHub strips *.dat silently).
-    Legacy local `config/ictrp.dat` is only a silent fallback read, never written.
+    Legacy local `config/ictrp.dat` is only a silent fallback read (read-only; never persisted to disk).
   - SAFE PREVIEW by default: prints the exact request, performs NO network I/O unless --run.
 
 EGRESS: only PUBLIC query terms are sent to the third-party endpoint. No confidential
@@ -31,6 +31,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import sys
 import time          # 异步轮询指数退避用
 from pathlib import Path
@@ -42,8 +43,13 @@ import usage_guard
 import sys as _sys
 from pathlib import Path as _Path
 _SKILL_ROOT = _Path(__file__).resolve().parent.parent
-if str(_SKILL_ROOT) not in _sys.path:
-    _sys.path.insert(0, str(_SKILL_ROOT))
+# adapters/ modules import the pure-local shared util `usage_guard` from
+# scripts/, and config.keys lives at the skill root. Expose both so
+# `import usage_guard` / `from config.keys import ...` resolve whether this
+# file is run as a subprocess (sys.path[0] == adapters/) or imported.
+for _d in (str(_SKILL_ROOT), os.path.join(str(_SKILL_ROOT), "scripts")):
+    if _d not in _sys.path:
+        _sys.path.insert(0, _d)
 from config.keys import (
     get_secret as _keys_get_secret,
     get_token as _keys_get_token,
@@ -80,6 +86,43 @@ def _check_outbound_authorization(endpoint):
     sys.stderr.write(
         f"[AUTH-BLOCK] outbound to {endpoint} requires user confirmation.\n")
     return False
+
+
+# ---- ct-base §5.50: 出站 payload 发送前剥离 PII（身份证 / 手机号 / 邮箱）----
+_PII_PATTERNS = [
+    (re.compile(r"\b1[3-9]\d{9}\b"), "<phone>"),              # 大陆手机号
+    (re.compile(r"\b\d{17}[\dXx]\b"), "<id-card>"),            # 身份证
+    (re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"), "<email>"),
+]
+
+
+def _sanitize_text(s: str) -> str:
+    for pat, repl in _PII_PATTERNS:
+        s = pat.sub(repl, s)
+    return s
+
+
+def _sanitize_payload(payload):
+    """递归剥离出站 payload 中的 PII（ct-base §5.50）。只改值、不改结构。"""
+    if isinstance(payload, dict):
+        return {k: _sanitize_payload(v) for k, v in payload.items()}
+    if isinstance(payload, list):
+        return [_sanitize_payload(v) for v in payload]
+    if isinstance(payload, str):
+        return _sanitize_text(payload)
+    return payload
+
+
+# ---- ct-base §5.49: 代理残留自动重试（Windows 系统代理残留 → ProxyError/WinError 10061）----
+def _request(method, url, **kwargs):
+    """requests 封装：首次失败若为 ProxyError/ConnectionError（系统代理残留），
+    自动绕过系统代理（proxies 置空）直连重试一次；直连仍失败则原样抛出。"""
+    import requests
+    try:
+        return requests.request(method, url, **kwargs)
+    except (requests.exceptions.ProxyError, requests.exceptions.ConnectionError):
+        kwargs.setdefault("proxies", {"http": None, "https": None})
+        return requests.request(method, url, **kwargs)
 
 
 def print_preview(source, endpoint, token, payload, out):
@@ -208,7 +251,8 @@ def _run_async_poll(source, endpoint, token, run_id, out, timeout):
     wait = 5.0
     while time.time() < deadline:
         try:
-            r = requests.get(status_url, headers=headers, timeout=10)
+            # ct-base §5.49：代理残留自动重试（ProxyError/ConnectionError → 绕代理直连）
+            r = _request("GET", status_url, headers=headers, timeout=10)
         except requests.exceptions.Timeout:
             time.sleep(min(wait, max(1, deadline - time.time())))
             wait = min(wait * 2, 30)
@@ -243,8 +287,11 @@ def run(source, endpoint, token, payload, out, timeout):
         print(f"[{source.lower()}-extsvc][WARN] no token -> endpoint returns 401")
 
     # ===== 阶段 1：提交（应毫秒级返回 run_id；用短超时，避免卡在网关）=====
+    # ct-base §5.50：出站 payload 发送前脱敏（身份证/手机号/邮箱）；
+    # ct-base §5.49：代理残留自动重试（ProxyError/ConnectionError → 绕代理直连）。
+    safe_payload = _sanitize_payload(payload)
     try:
-        submit_resp = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+        submit_resp = _request("POST", endpoint, headers=headers, json=safe_payload, timeout=30)
     except requests.exceptions.Timeout:
         # 提交本身超时极罕见（异步 /run 只做 fire-and-forget）；按原超时逻辑降级
         _write_timeout(out, source, timeout, "submit")

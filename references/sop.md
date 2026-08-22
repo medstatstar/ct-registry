@@ -16,7 +16,7 @@
 
 - Python 3（脚本用 `sys.executable`，不需额外依赖；CT.gov 走 `urllib`）。
 - 联网（CT.gov 直连公开 API，无密钥）。
-- 可选 China CDE：经统一端点 `ct-search.coze.site/run`（WHO ICTRP 与中国 CDE 共用一枚长期有效 token，落盘 `config/ictrp.dat`，经 `search_ictrp.py --store-token` 存储）；旧版独立 CDE 端点已归档至本地 `CDE/` 目录（token 落盘 `CDE/cde.dat`，经 `CDE/search_cde_workflow.py --store-token` 存储），仅作 `--cde-legacy` 兜底、不随包发布。不配置则跳过 CDE，仅 CT.gov。
+- 可选 China CDE：经统一端点 `ct-search.coze.site/run`（WHO ICTRP 与中国 CDE 共用一枚长期有效 token，落盘 `config/ictrp.dat`，经 `search_ictrp.py --store-token` 存储）。旧版独立 CDE 端点已归档至本地 `CDE/` 目录（token 落盘 `CDE/cde.dat`），并于 **2026-08-12 正式退役**；`--cde-legacy` 现为无操作警告并自动回退统一端点，不随包发布。不配置则跳过 CDE，仅 CT.gov。
 - 可选 PubChem 富集：需能访问 pubchem.ncbi.nlm.nih.gov（无密钥）。
 
 ## 3. 命令示例（从使用到产出）

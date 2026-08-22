@@ -15,7 +15,7 @@
 >   该 token **本地化落盘后长期有效、不会过期**，无需每次取数前重签；仅极罕见情况下（token 文件损坏/被吊销/权限不足）返回
 >   **403** "insufficient permissions"，届时再经 `search_ictrp.py --store-token` 重签即可。WHO ICTRP
 >   一次镜像 14+ 注册库（jRCT/DRKS/ANZCTR/ISRCTN/CTRI/…），是低成本拓宽覆盖的首选。
->   **该统一端点同时服务中国 CDE**（`source="chinadrugtrials"`，由 `search_ictrp.py --source chinadrugtrials` 驱动；`ct_registry.py --with-cde` 默认走此路）。独立端点 `ct-searchcde.coze.site/run`（`CDE/search_cde_workflow.py`，已归档至本地 `CDE/`、不随包发布）仅作**兜底参考**，统一端点异常时用 `--cde-legacy` 回退。一枚 token（`config/ictrp.dat`）同时覆盖 WHO 与 CDE。
+>   **该统一端点同时服务中国 CDE**（`source="chinadrugtrials"`，由 `search_ictrp.py --source chinadrugtrials` 驱动；`ct_registry.py --with-cde` 默认走此路）。独立端点 `ct-searchcde.coze.site/run`（`CDE/search_cde_workflow.py`，已归档至本地 `CDE/`、不随包发布）已于 **2026-08-12 正式退役**，不再作为可用回退；统一端点异常时 `--cde-legacy` 仅打印废弃警告并自动回退统一端点。一枚 token（`config/ictrp.dat`）同时覆盖 WHO 与 CDE。
 > - WHO ICTRP 的桥接/去重价值由 `aggregate.py` 内部**复现并强化**（不只替代），故菜单中**包含** ICTRP 选项。
 > - **WHO 主路径 / 被覆盖源兜底策略（2026-07-28）**：仅当 `ct_registry.py --with-ictrp` 设置时启用。
 >   此时 WHO ICTRP 为**主聚合器**，它已镜像的试验注册库（**CT.gov / EU-CTR / ISRCTN / DRKS / ChiCTR**）
@@ -298,7 +298,7 @@
 | 检索主题完全缺失 | "请先提供疾病/适应症或药物名，否则无法检索" |
 | CT.gov 网络超时 / URLError | "CT.gov 网络超时。请检查网络后重试，或仅保留 EU CTR 直连源" |
 | 国外源术语未命中（CONFIRM/ABORT） | 见 §6.4，提示用户确认英文译文后重跑 |
-| CDE 401 (统一端点) | "CDE 主路径走统一端点 ct-search.coze.site/run，缺少 Bearer token。请配置 ICTRP_WORKFLOW_TOKEN / --token / config/ictrp.dat（与 WHO 共用一枚 token）。若用 --cde-legacy 独立端点，则配置 CDE_WORKFLOW_TOKEN / CDE/cde.dat" |
+| CDE 401 (统一端点) | "CDE 主路径走统一端点 ct-search.coze.site/run，缺少 Bearer token。请配置 ICTRP_WORKFLOW_TOKEN / --token / config/ictrp.dat（与 WHO 共用一枚 token）。旧版 --cde-legacy 独立端点已于 2026-08-12 退役（仅打印警告），如仍需本地调用则配置 CDE_WORKFLOW_TOKEN / CDE/cde.dat" |
 | CDE 403 | "CDE token 校验失败（极罕见：文件损坏/被吊销/权限不足），请检查并重签后重跑" |
 | ChiCTR/ISRCTN/DRKS 401/404 | "这三个源经统一端点 `search_ictrp.py --source {chictr,drks,isrctn}` 调用（v0.3.30+ 已接管，与 WHO/CDE 共用一枚 token）。若仍返回 401/404，说明统一端点后端未对该 source 供数——改用 CT.gov + EU CTR + CDE，或联系作者确认后端 provisioning" |
 | WHO ICTRP 401/403 | "WHO ICTRP 端点返回 401/403 = token 校验失败（极罕见：文件损坏/被吊销/权限不足；本地化 token 本长期有效、不会过期）。请检查 `config/ictrp.dat` 并重签一枚 Coze workload-identity token（与 CDE 同类型即可，无需 PAT），执行：python search_ictrp.py --store-token \"<new-jwt>\" 后重跑" |

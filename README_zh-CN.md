@@ -135,12 +135,25 @@
 **结果能当监管申报用吗？**
 不能。输出仅用于参考 / 规划。CSR / 申报文件须另按 GCP 单独生成。
 
+**抓取合规吗？会踩限流吗？**
+全部走官方公开 API / 公开检索接口（CT.gov v2、EU-CTR、PubChem、WHO ICTRP、中国 CDE 统一端点），不爬取任何未公开页面，也不绕过站点防护。后台对第三方端点采取**串行调用 + 指数退避**，遵守其速率限制；遇到 429 / 超时按退避重试，绝不暴力并发。全球镜像（14+ 注册库）受统一端点 5 分钟网关硬墙约束，属合规等待而非限速惩罚。
+
 ## 开始检索前：耗时与数据量提示
 
 借 WHO ICTRP 做全球检索（一次调用镜像 14+ 注册库）时，后台要实打实去爬这些库，**不是秒回**。给你一个直观的预期：
 
 - **等多久**：一次真实检索，后台通常要 **1 到 5 分钟**才把数拿回来。技能会先给你一张"已提交、正在跑"的回执，然后自动轮询，跑完才返结果——这段时间你不用一直盯着，结果好了自然会回来。
 - **为什么会贴着 5 分钟**：统一的第三方端点外侧有一道 **5 分钟硬墙**（网关上限）。像 `cancer` 这种宽词、或"全球 + 不限国家"的大检索面，处理时间可能贴着这道墙走，极少情况下会超时失败。真遇到了，技能会明明白白告诉你，而不是悄悄把数据丢了。
+- **超过 5 分钟怎么办**：如果检索量超过 5 分钟仍未能全部完成，系统会**返回已检索到的部分结果**（而非报错），并在输出中标注 `is_timeout: true`。你可以在等待时间与数据完整性之间自行取舍：要完整结果请耐心等待；要快速预览可接受部分结果。
+- **5 分钟大约对应多少条数据**：取决于检索面的宽窄，经验值如下：
+
+  | 关键词类型 | 典型命中量 | 5 分钟能否拿完 | 经验吞吐 |
+  |-----------|-----------|--------------|---------|
+  | 窄词（如 `osimertinib`） | 20-200 条 | ✅ 轻松拿完 | WHO ~100-150 页/min，CDE ~200-300 页/min |
+  | 中词（如 `diabetes`） | 5,000-50,000 条 | ❌ 只能拿部分 | 5 分钟 ≈ 1000-1500 条 |
+  | 宽词（如 `cancer`） | 100,000+ 条 | ❌ 只能拿很少部分 | 首页 ~30s，翻页 ~2-3s/页（WHO） |
+
+  拿不全怎么办：① 接受部分结果（做趋势分析够用）；② 缩小检索面（加干预措施/申办方/国家限定）；③ 分多次查（按维度拆分）。
 - **数据量怎么收着点**：WHO 全球检索的结果集可以非常大。如果一次查回来的数偏少、或者超时了，多半是**检索面太宽**——把关键词收窄些（比如用 `osimertinib` 而不是 `cancer`），或改用**高级检索**（在对话里说"高级检索"，由代码自动拼 `药物 AND 适应症` 这类更精准的过滤，返回量更小、也更快）。另外每天还有 **100 次需求**的配额上限（见上 FAQ），正常使用远碰不到。
 
 ## 安全（safe preview）
@@ -169,9 +182,22 @@ WHO ICTRP 与中国 CDE 在统一端点上**共用一枚长期有效 token**；�
 - **是混淆、非加密**：编码只是为了不被随意查看，挡不住有意的提取。把它当凭证看待，但无需当成最高机密严防死守。
 - **安全扫描器**：部分自动化扫描器会标记 `extsvc_client.py`（含 HTTP/Bearer 调用）。该 blob 是公开共用凭证，并非私钥——仓库内不含任何私密密钥。覆盖方式仅走 CLI/环境变量。
 
+## 为什么可以信任结果（反幻觉）
+
+输出里的每一行都是**检索来的，不是编出来的**：
+
+- **来源权威**：记录直接来自各注册库自身的 API / 端点（ClinicalTrials.gov v2、PubChem PUG-REST、EU-CTR 网页解析，以及 CDE / WHO / ChiCTR / ISRCTN / DRKS 的统一 Coze 端点）。在数据源与你之间没有任何 LLM 生成环节。
+- **规则化归一化**：合并与字段映射（分期、状态、申办方……）是确定性代码，不是自由文本改写。原始值（CDE 中文状态、适应症等）一律**保真**——绝不翻译或篡改。
+- **数量是回显，不是估算**：总数与分源明细直接取自各源响应；技能不会四舍五入、猜测或外推条数。
+- **已知限制会标出，而非藏起**：贴着 5 分钟网关的宽词会返回**部分**结果并标注 `is_timeout: true`（见"开始检索前：耗时与数据量提示"）；列表模式的分期 / 申办方显示 `Unknown`（仅 detail 模式填充）。这些提示都会打印出来，不会偷偷丢弃。
+
+提醒：各注册库按自身节奏更新，可能有缺口或延迟；任何监管 / 申报用途前请务必回源核对。
+
 ## 进阶参考（Advanced Reference）
 
 > 以下命令面向开发者 / 进阶用户。日常对话中你**无需**手动输入——助手会在安全预览门之后替你构建并执行。
+>
+> ⚠️ 含 `--run` 的命令会执行**真实联网检索**（公开查询词出域到上述端点）。省略 `--run`——或停留在对话安全预览——即为默认**不联网计划**，只打印打算发出的调用。
 
 ### 运行环境要求
 - Python 3.10+（推荐 Anaconda）。
@@ -184,65 +210,46 @@ python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-pubchem 
 ```
 
 ### 跨源编排（CT.gov + CDE 并入同一格局）
-```bash
-# 英文主词：CT.gov 原样使用；CDE 关键词自动推导为中文
-python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-cde --out-dir ./out --run
-# 中文主词：CT.gov 自动翻译为英文；CDE 原样使用（中文 0 条时静默降级到英文）
-python scripts/ct_registry.py --cond "非小细胞肺癌" --status RECRUITING --with-cde --out-dir ./out --run
-# 显式覆盖 CDE 关键词（中文 0 条时静默降级到英文）
-python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-cde --cde-keyword "高血压" --out-dir ./out --run
-# CDE 高级筛选（药品 + 适应症 + 状态），并入
-python scripts/ct_registry.py --cond "NSCLC" --with-cde --cde-mode combined --cde-keyword "678" --cde-trial-status "已完成" --run
-# CDE 多关键词 AND，并入
-python scripts/ct_registry.py --cond "NSCLC" --with-cde --cde-multi-keywords "高血压 糖尿病" --run
-```
+一次运行合并 CT.gov + CDE：中英文主词自动关键词本地化、显式 CDE 关键词覆盖、高级筛选（`--cde-mode combined`）、多关键词 AND（`--cde-multi-keywords`）。完整 CLI 示例见 `references/cli_reference.md`。
 
 ### 全量格局（Tier-1 + Tier-2 外部服务）
-```bash
-python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING \
-    --with-euctr --with-cde --with-chictr --with-isrctn --with-drks --with-ictrp \
-    --out-dir ./out --run
-```
+一次调用覆盖 CT.gov + EU-CTR + CDE + ChiCTR + ISRCTN + DRKS + WHO ICTRP，合并聚合为单一报告。完整 CLI 示例见 `references/cli_reference.md`。
 
 ### 各源直连脚本
 ```bash
 # CT.gov（必做，官方 API）
 python scripts/search_ctgov.py --cond "non-small cell lung cancer" --status RECRUITING --max 50 --out ctgov.json
-# EU-CTR（纯 HTTP 解析，无需 token）
-python scripts/search_eu_ctr.py --q "cancer" --run --out euctr.json
+# CT.gov 高级检索（完整 v2 query.* / filter.* 覆盖，v0.3.84+）
+python scripts/search_ctgov.py \
+  --cond "non-small cell lung cancer" \
+  --phase PHASE1,PHASE3 --study-type INTERVENTIONAL \
+  --status RECRUITING,COMPLETED \
+  --start-date-since 2023-01-01 --last-update-until 2026-08-01 \
+  --sort LastUpdatePostDate:desc --has-results --fields NCTId,BriefTitle --max 10
+# CT.gov 原始 Expert Search 表达式透传（可直接粘贴网站高级检索表达式）
+python scripts/search_ctgov.py --adv 'AREA[StudyType]OBSERVATIONAL AND AREA[LocationCountry]China' --max 5
 # PubChem 药物 → 靶点
 python scripts/enrich_pubchem.py --drug "osimertinib" --targets --out pubchem.json
 ```
 
-### 统一端点（WHO ICTRP + 中国 CDE + ChiCTR / ISRCTN / DRKS）
-```bash
-# 推荐：统一 Coze /run 端点（WHO 与 CDE 共用一枚内嵌于 config/keys.py 的 token）
-python scripts/search_ictrp.py --source who --q "osimertinib" --run --out ictrp.json
-python scripts/search_ictrp.py --source chinadrugtrials --q "高血压" --run --out cde_list.json
-python scripts/search_ictrp.py --source chinadrugtrials --q "678" --drugs-name "帕博利珠单抗" --trial-status "进行中" --run --out cde_list.json
-python scripts/search_ictrp.py --source chinadrugtrials --q "高血压 糖尿病" --run --out cde_list.json
-python scripts/search_ictrp.py --source chictr --q "肺癌" --run --out chictr.json
-python scripts/search_ictrp.py --source isrctn --q "cancer" --run --out isrctn.json
-python scripts/search_ictrp.py --source drks --q "diabetes" --run --out drks.json
-# 旧版独立 CDE 端点（已归档至本地 CDE/ 目录，不随包发布；仅作兜底参考）
-python CDE/search_cde_workflow.py --keyword "奥希替尼" --run --out cde_list.json
-# token 已内嵌于 config/keys.py（随包发布），无需手动操作。
-# 如需覆盖（如极罕见 403），设环境变量 CT_REGISTRY_COZE_TOKEN 或传 --token。
-```
+> **CT.gov 高级检索参数**（v0.3.85+，完整清单见 `--help`）：`--query`（query.term，支持 AREA[] 表达式）、
+> `--titles` `--outc` `--lead` `--id` `--locn` `--patient`（其余 query.*）、`--adv`（原始 filter.advanced）、
+> `--phase` `--study-type` `--age-group` `--sex` `--has-results`（自动组装为 `filter.advanced`
+> 的 AREA[] 表达式，并与 `--adv` 做 AND 合并）、`--sort`（最多 2 个；`field[:asc|:desc]` 或 `@relevance`）、
+> `--ids`（按 NCT 号批量）、`--geo`（`distance(lat,lon,dist)` 或裸 `lat,lon,dist`；强制 1-500 mi / 1-805 km）、
+> `--fields`、服务端日期区间 `--first-post-since/--until`、
+> `--last-update-*`、`--start-date-*`、`--primary-completion-*`、`--completion-*`、多值 `--status`，
+> 以及 `--post-status/--post-ids/--post-geo/--post-adv`（postFilter.*——语义同 filter.* 但不影响相关性排序）。
+> 注意：v2 没有扁平的 phase/studyType/日期参数——全部经 `filter.advanced` 实现；
+> `query.rmtln` 是 **v1 遗留参数，v2 已移除**（实测 HTTP 400，2026-08-13 对真实 API 验证）——
+> 远程试验检索请用 `--query`/`--adv`；
+> `--date-after` 保留旧本地后过滤（开始年份下限）。
 
-### CDE 四种调用模式（自动判定；旗标仅供参照）
-```bash
-# 模式 search（默认关键词 或 高级筛选）
-python CDE/search_cde_workflow.py --drugs-name "帕博利珠单抗" --indication "非小细胞肺癌" --drugs-type "化学药物" --appliers "默沙东" --trial-status "进行中" --run
-# 模式 combined（关键词 + 高级筛选）
-python CDE/search_cde_workflow.py --mode combined --keyword "678" --trial-status "已完成" --run
-# 模式 multi_keyword（空格分隔 AND）
-python CDE/search_cde_workflow.py --mode multi_keyword --multi-keywords "高血压 糖尿病" --run
-# 模式 detail（项目列表 → 并行 65 字段抓取；≤100 自动，>100 先确认）
-python CDE/search_cde_workflow.py --project-list cde_list.json --run --out cde_detail.json
-# 仅预览（默认，不发网络）
-python CDE/search_cde_workflow.py --keyword "奥希替尼"
-```
+### 统一端点（WHO ICTRP + 中国 CDE + ChiCTR / ISRCTN / DRKS）
+WHO + CDE + ChiCTR / ISRCTN / DRKS 共用同一个 Coze 端点；token 已内嵌于 `config/keys.py`（随包发布），无需手动操作。如需覆盖（如极罕见 403），设环境变量 `CT_REGISTRY_COZE_TOKEN` 或传 `--token`。各源 CLI 示例见 `references/cli_reference.md`。
+
+### CDE 四种调用模式（已退役 2026-08-12；仅作本地归档参考；生产请走统一端点）
+生产环境 CDE 检索走上面的统一端点；已退役的独立工作流仅归档于本地 `CDE/` 目录（不随包发布）。
 
 ### 归一化 → 聚合 → 报告 → Excel
 ```bash
@@ -255,14 +262,22 @@ python scripts/export_xlsx.py --in normalized.json --out report.xlsx --title "As
 ```
 
 ### 结构化详情 + 确认门 PDF 下载
-```bash
-python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING \
-    --with-cde --with-euctr --with-detail --out-dir ./out --run
-# 真正下载列出的 EU-CTR PDF（显式确认门）
-python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING \
-    --with-cde --with-euctr --with-detail --download-docs --out-dir ./out --run
-python scripts/download_docs.py --in ./out/normalized.json --out-dir ./out/docs --yes
-```
+详情抓取（≤100 条自动，>100 条先确认）与 PDF 下载均经显式确认门；PDF 绝不自动下载。直接下载文档可续传（跳过已存在文件）。CLI 示例见 `references/cli_reference.md`。
+
+> ⚠️ **文献下载耗时与规模警示（2026-08-12 实测）**
+> `download_docs.py` 为**严格顺序下载**（一次一个文件、无并发），且**无内置数量上限**——会拉取输入 JSON 里每一个 `documents[].url`。只有 **EU-CTR** 提供真实可下载链接（CDE / WHO / CT.gov 不暴露方案 PDF 公开 API），因此一次宽泛的 EU-CTR 检索（例如 40 条记录 × 约 3 个文档）就可能意味着 **100+ 次顺序下载**。
+>
+> **实测行为（沙箱，2026-08-12）：**
+> - 单文件硬超时 `--timeout` 默认 **60s**；失败后打印 `FAILED` 并跳过——**没有重试循环**（docstring 写"per-file retries"但实际只尝试一次）。
+> - 到 `euclinicaltrials.eu` 的单次往返延迟 ≈ **1–3 秒/请求**。
+> - 本沙箱出网被限速到 ~20–30 KB/s，一个 3 MB 的 PDF 会撞上 60s 超时而被**跳过**——即在限速网络下大文档会下载失败。生产（Coze）部署带宽通常高得多，但**不要默认**文档一定能下完。
+>
+> **规划经验值：** 总耗时 ≈ `文件数 × 单文件耗时`，**最坏情况下限为 `文件数 × 60s`**（卡住的文件会耗尽整个超时才跳过）。100 个文件最坏约 100 分钟。EU-CTR 的方案/IB/CSR PDF 通常为 0.5–15 MB，故真实单文件耗时随文档大小与部署带宽浮动。
+>
+> **缓解措施：**
+> - 控制收集的文档量：`fetch_eu_ctr_docs.py --max N`，或只下载部分记录。
+> - 分批小量确认下载；重跑安全——`--out-dir` 中已存在的文件会被**跳过**（可续传）。
+> - 若大量 `FAILED … timed out`，调大 `--timeout`（如 `--timeout 180`）或换更快的网络再跑。
 
 ### WHO ICTRP 高级字段（节选 → CLI）
 `--who-title`（+ 运算符）、`--who-condition`、`--who-intervention`（别名 `--intr`）、`--who-recruitment-status`（别名 `--status`）、`--who-sponsor`、`--who-country`、`--who-phase`（逗号分隔）、`--who-date-start` / `--who-date-end`（DD/MM/YYYY）、`--who-with-results`、`--who-secondary-id`。任一结构化字段会自动选 `mode=combined`。
@@ -271,7 +286,7 @@ python scripts/download_docs.py --in ./out/normalized.json --out-dir ./out/docs 
 `--reg-no`、`--indication`、`--case-no`、`--drugs-name`、`--drugs-type`（枚举：中药/天然药物/化学药物/生物制品）、`--appliers`、`--communities`、`--researchers`、`--agencies`、`--trial-status`（11 值枚举：进行中/尚未招募/招募中/招募完成/已完成/主动暂停/主动终止/IEC·IRB暂停/IEC·IRB终止/责令暂停/责令终止）。注意：CDE 高级界面**无期次过滤**——分期由 detail 后筛。
 
 ### 人机交互契约（两道门）
-- **Gate 1 —— 检索前简报（在 `--run` 之前）：** 助手打印各源关键词（中英对照）、范围、时间/状态筛选、`demand_id` 分组与配额影响，以及"免费、每日 100 个需求"提示。仅在确有选择时才追问。
+- **Gate 1 —— 检索前简报（在任一真实联网调用之前）：** 助手打印各源关键词（中英对照）、范围、时间/状态筛选、`demand_id` 分组与配额影响，以及"免费、每日 100 个需求"提示。仅在确有选择时才追问。
 - **Gate 2 —— 检索后列表确认：** 展示列表（总数、范围、样例行、`Unknown` 分期/申办方提示）。详情抓取：≤100 条自动执行；>100 条先确认。PDF 绝不自动下载。
 
 ### 错误处理（速查）
@@ -290,16 +305,16 @@ python scripts/download_docs.py --in ./out/normalized.json --out-dir ./out/docs 
 
 ---
 
-**版本**：v0.3.78 | **License**：MIT | **Authors**：medstatstar, phoe-zip
+**版本**：v0.3.81 | **License**：MIT | **Authors**：medstatstar, phoe-zip
 
 如有功能建议、Bug 反馈或其他意见，请直接联系作者：medstatstar@gmail.com（张文彤 / Wintone Zhang）。
 
 ## 保密声明
 
-> CT 全系列技能由 16 余个专用行业技能构成，按「保密信息出域风险 + 是否对外检索」分为 A、B、C、D 四级，完整覆盖新药临床试验（Clinical Trial）全流程的各方面需求。
+> CT 全系列技能由 20+ 个技能构成，按「保密信息出域风险 + 是否对外检索」分为 A、B 两档，完整覆盖新药临床试验（Clinical Trial）全流程的各方面需求。
 >
-> - **A 级 / B 级（不涉密）**：完全本地运行、仅使用普通数据；B 级虽需对外公开检索，但不涉及任何保密信息。这两级技能均会在 GitHub 公开发布。
-> - **C 级 / D 级（涉密）**：涉及药企需严格保密的临床试验数据、内部资讯等敏感内容（如 ct-analysis、ct-sdtm 等）；C 级在本地处理、数据不出域，D 级还需政策审批。这两级技能仅限企业内部使用，目前不对外公开发布。
+> - **A 档（非涉密·公开）**：输入为普通数据，可完全本地运行（`network=off`）或对外公开检索（`network=public-retrieval`，如 ct-registry / ct-advisor 等）；不涉及任何保密信息。A 档技能均在 GitHub 公开发布。
+> - **B 档（涉密·内部）**：涉及药企需严格保密的临床试验数据、内部资讯等敏感内容（如 ct-analysis、ct-sdtm、ct-eligibility 等）；B 档在本地处理（`egress=none`，数据不出域）或需审批出站（`egress=approval-req`，如 ct-eligibility）。B 档技能仅限企业内部使用，目前不对外公开发布。
 >
 > 若您对这些涉密技能确有实际需求，欢迎与作者联系，定制并安装相关技能。
 >

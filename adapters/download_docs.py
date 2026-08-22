@@ -9,7 +9,7 @@ explicit confirmation. This module:
   * collects every non-empty `documents` entry ({title, type, url}),
   * PRINTS them (always), and
   * downloads them ONLY when --yes is passed (otherwise preview-only).
-Sequential with per-file retries; skips files that already exist.
+Sequential, **no retry loop** (a failed file is reported as `FAILED` and skipped); skips files that already exist.
 
 Note: CDE's workflow detail carries NO attachment URLs (verified), so CDE records
 have empty `documents`; real downloadable links come mainly from EU-CTR (populated
@@ -44,19 +44,23 @@ def collect(path):
     else:
         recs = []
     out = []
+    sources_present = set()
     for r in recs:
+        src = r.get("source")
+        if src:
+            sources_present.add(src)
         for d in (r.get("documents") or []):
             url = d.get("url")
             if not url:
                 continue
             out.append({
                 "registry_id": r.get("registry_id"),
-                "source": r.get("source"),
+                "source": src,
                 "title": d.get("title"),
                 "type": d.get("type"),
                 "url": url,
             })
-    return out
+    return out, sources_present
 
 
 def main():
@@ -68,9 +72,21 @@ def main():
     ap.add_argument("--timeout", type=int, default=60)
     args = ap.parse_args()
 
-    docs = collect(args.inp)
+    docs, sources_present = collect(args.inp)
     if not docs:
         print("[download_docs] no downloadable documents found in %s" % args.inp)
+        # P1-6 (2026-08-12): guide users whose sources don't host protocol PDFs.
+        if sources_present:
+            no_pdf = sorted(s for s in sources_present
+                            if s in ("ICTRP", "CDE", "CTGOV", "WHO"))
+            if no_pdf:
+                print("[download_docs][GUIDE] 以下来源不提供方案 PDF 公开 API，无法经本工具下载：%s。"
+                      % ", ".join(no_pdf))
+                print("   · 文档请跳转原注册库官网手动获取：")
+                print("     - WHO ICTRP : https://trialsearch.who.int/")
+                print("     - 中国 CDE 公示平台 : https://www.chinadrugtrials.org.cn/")
+                print("     - ClinicalTrials.gov : https://clinicaltrials.gov/")
+                print("   · 仅 EU-CTR 提供可自动拉取的文档链接（经 fetch_eu_ctr_docs.py）。")
         return
 
     print("[download_docs] %d document link(s) found:" % len(docs))

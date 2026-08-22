@@ -98,6 +98,7 @@ skill on the user's behalf and must be reviewed.
 - **Session cache (confirmed 2026-07-31):** after the user first "adopts", the Manifest is cached to
   disk (`config/kw_system_cache.json`, md5-deduped); re-running the same terms in this session auto-adopts,
   no menu. Delete the cache file or change terms to re-confirm.
+- **🔴 Non-interactive (agent) calls MUST pass one of `--no-expand` / `--kw-en` / `--kw-zh` / `--kw-adopt` (2026-08-13):** the gate renders a menu and calls `sys.exit(0)` when no skip flag and no session cache exists — it does NOT check whether stdin is a TTY and does NOT respect `--auto-confirm` (which only auto-accepts result-count confirmations, not this gate). An agent that copies the bare `--cond ... --run` recipe silently exits with zero output. Prefer `--no-expand` (simplest, fully deterministic); `--kw-en "<final term set>"` if you want the expanded/edited terms injected explicitly.
 - **Skip / edit injection:** only when the user explicitly passes `--no-expand`, or after editing in the
   gate directly injects the final term set via `--kw-en` / `--kw-zh`, does the menu skip and go straight to
   Gate 1 (legacy behaviour preserved). `--expand-intent {disease,intervention,drug,drug_class}` can

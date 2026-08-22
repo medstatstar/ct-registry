@@ -3,12 +3,12 @@ slug: ct-registry
 displayName: 临床试验注册检索专家 / Clinical Trial Registry Search
 name: ct-registry
 cn_name: 临床试验注册检索专家
-version: 0.3.79
+version: 0.9.0
 invocable: true
 required_commands: [python]
-summary: 跨源检索临床试验注册库（ClinicalTrials.gov / PubChem 自动直连；中国 CDE 经外部工作流自动化检索、ChiCTR 经用户粘贴页面本地解析；EU CTIS 按号富集）并归一化聚合，辅助立项查重、对照设计与竞品格局分析。检索公开注册库（B 档：普通数据输入 + 对外检索）。
+summary: "跨源检索临床试验注册库（ClinicalTrials.gov / PubChem 自动直连；中国 CDE、ChiCTR、ISRCTN、DRKS 经统一外部工作流——第三方端点、共享 Bearer、仅公开查询词出域——自动化检索；EU CTIS 按号富集）并归一化聚合，辅助立项查重、对照设计与竞品格局分析。检索公开注册库（B 档：普通数据输入 + 对外检索）。"
 license: MIT
-description: "跨源检索全球临床试验注册库并归一化聚合。可自动化直连：ClinicalTrials.gov v2、PubChem（公开 REST API，零保密数据或信息输入）。中国 CDE 因 WAF 拦截自动化浏览器，改为外部工作流自动化检索（第三方端点，仅公开查询词出域，需 Bearer token，已实测无 token 返回 401）；ChiCTR 仍经用户粘贴公开页面→本机解析（不出域）；EU CTIS 仅支持按号 retrieve（无搜索）；ISRCTN 公开 API 已失效。聚合分期/状态/申办方/时间线/竞品格局，产出 JSON / Markdown（可选 PNG）。零保密数据或信息输入，B 档（普通数据输入 + 对外检索），可快速推广技能。 / Cross-source search of global clinical-trial registries, normalized and aggregated. Auto-direct sources: ClinicalTrials.gov v2, PubChem (public REST, ordinary input + public retrieval). China CDE blocks automated browsers via WAF → external workflow for automatable retrieval (third-party endpoint, public query terms only egress, Bearer token REQUIRED — verified: HTTP 401 without it); ChiCTR still user-pastes public page → local parse (no egress). EU CTIS supports retrieve-by-number only (no search). ISRCTN public API is dead. Aggregates phase / status / sponsor / timeline / competitor landscape into JSON / Markdown (optional PNG). B-tier (ordinary input + public retrieval), quickly-adoptable."
+description: "跨源检索全球临床试验注册库并归一化聚合。可自动化直连：ClinicalTrials.gov v2、PubChem（公开 REST API，零保密数据或信息输入）。中国 CDE 因 WAF 拦截自动化浏览器，改为外部工作流自动化检索（第三方端点，仅公开查询词出域，需 Bearer token，已实测无 token 返回 401）；ChiCTR 经统一端点（source=chictr，第三方，共享 Bearer）检索，用户粘贴页面仅作本地解析兜底；EU CTIS 仅支持按号 retrieve（无搜索）；ISRCTN 公开 API 已失效，但可经统一端点（source=isrctn）取。聚合分期/状态/申办方/时间线/竞品格局，产出 JSON / Markdown（可选 PNG；可选经 download_docs.py 拉取 EU-CTR 文档 PDF 到本地 --out-dir）。CDE 亦支持可选商业 API key（--cde-api-key，仅发往官方 CDE API）。零保密数据或信息输入，B 档（普通数据输入 + 对外检索），可快速推广技能。 / Cross-source search of global clinical-trial registries, normalized and aggregated. Auto-direct sources: ClinicalTrials.gov v2, PubChem (public REST, ordinary input + public retrieval). China CDE blocks automated browsers via WAF → external workflow for automatable retrieval (third-party endpoint, public query terms only egress, Bearer token REQUIRED — verified: HTTP 401 without it); ChiCTR retrieved via unified endpoint (source=chictr, third-party, shared Bearer), with user-pasted page as a local-parse fallback. EU CTIS supports retrieve-by-number only (no search). ISRCTN public API is dead but retrievable via unified endpoint (source=isrctn). Aggregates phase / status / sponsor / timeline / competitor landscape into JSON / Markdown (optional PNG; optional EU-CTR PDF download via download_docs.py to a local --out-dir). CDE also supports an optional commercial API key (--cde-api-key, sent only to the official CDE API). B-tier (ordinary input + public retrieval), quickly-adoptable."
 triggers:
   - "clinical trial registry search"
   - "临床试验注册库检索"
@@ -24,9 +24,9 @@ metadata:
 permissions:
   scope: "user-space-only"
   network: "optional"
-  network_note: "Auto-direct public-retrieval sources: ClinicalTrials.gov v2 + PubChem (public REST API, ordinary input + public retrieval, B-tier). EU CTIS supports retrieve-by-number only (no search). China CDE blocks automated browsers via WAF -> external workflow for automatable retrieval (third-party endpoint, only public query terms egress, Bearer token REQUIRED - verified: HTTP 401 without it; search/detail FIXED & verified 2026-07-23, all four modes end-to-end); ChiCTR still user-pastes public page -> local parse (no egress); ISRCTN public API is dead. All paths require zero confidential data or information input; only public query terms ever leave the environment (e.g. CDE via the Coze workflow)."
-  filesystem: "read-only to its own files; writes report files only to current working directory"
-  data: "no confidential data input; no external transmission of user data"
+  network_note: "Auto-direct public-retrieval sources: ClinicalTrials.gov v2 + PubChem (public REST API, ordinary input + public retrieval, B-tier). EU CTIS supports retrieve-by-number only (no search). China CDE blocks automated browsers via WAF -> external workflow for automatable retrieval (third-party endpoint, only public query terms egress, Bearer token REQUIRED - verified: HTTP 401 without it; search/detail FIXED & verified 2026-07-23, all four modes end-to-end). ChiCTR / ISRCTN / DRKS are ALSO served by the same unified endpoint (source=chictr|isrctn|drks, third-party, shared Bearer) - so their public query terms egress too. The bundled Bearer is a long-lived SHARED public credential issued by the author (XOR+base64 obfuscated, recoverable from the package); treat it as the endpoint's key, NOT your personal secret, and rotate/stop using if abused. CDE also supports an optional commercial API key (--cde-api-key) sent only to the official CDE API. All paths require zero confidential data or information input; only public query terms ever leave the environment."
+  filesystem: "read-only to its own files; writes report/Excel files to current working directory; download_docs.py can optionally write retrieved EU-CTR PDFs to a user-specified --out-dir"
+  data: "no confidential data input; only public query terms are transmitted (via the unified endpoint / optional CDE API); no user files or secrets are sent"
 
 ---
 
@@ -51,7 +51,7 @@ Search global clinical-trial registries in one pass, normalize heterogeneous rec
 
 ## Architecture
 
-**Principle: never use a headless browser / Playwright.** Chinese registries (CDE, ChiCTR) and WebForms portals (e.g. old ICTRP portal) block automated browsers via WAF fingerprint checks — a verified platform limitation, not a tooling gap. Where a registry has no clean HTTP API, retrieval is delegated to an external workflow (Tier 2) instead of scraping. The skill therefore uses two safe paths:
+**Principle: the skill does not use a headless browser to scrape WAF-blocked registries over the network.** Chinese registries (CDE, ChiCTR) and WebForms portals (e.g. old ICTRP portal) block automated browsers via WAF fingerprint checks — a verified platform limitation, not a tooling gap. Where a registry has no clean HTTP API, retrieval is delegated to an external workflow (Tier 2) instead of the caller scraping: any needed browser automation runs **server-side inside the unified endpoint**, and a local **paste-mode** (`parse_cde.py`) parses user-pasted pages with **no egress**. The skill therefore uses two safe paths:
 
 - **Tier 1 — direct-connect (pure HTTP, no browser):** `ClinicalTrials.gov v2` REST API (required); `EU CTR` legacy EudraCT search-result HTML parsed directly (`search_eu_ctr.py`, verified 2026-07-24); `PubChem` PUG-REST (drug → CID / targets, optional).
 - **Tier 2 — external workflow service (Bearer token, POST JSON, no browser):** a third-party endpoint retrieves on our behalf and returns structured JSON. Shared client in `extsvc_client.py`; thin wrappers `search_cde_workflow.py` / `search_chictr.py` / `search_isrctn.py` / `search_drks.py` reuse it. **Only public query terms are sent — no confidential data — compliant with the ct-base confidentiality red line.** CDE + ChiCTR + ISRCTN + DRKS + WHO ICTRP are served by one unified Coze endpoint `https://ct-search.coze.site/run` (WHO via `--source who`, CDE via `--source chinadrugtrials`), sharing one long-lived token.
@@ -99,15 +99,16 @@ All Tier-2 retrieval (CDE, WHO ICTRP, ChiCTR, ISRCTN, DRKS) is served by one uni
 - **Where it lives:** embedded in `config/keys.py` as an XOR+base64 obfuscated blob (`EMBEDDED_SECRETS["coze_unified"]`). `.py` is on every publishing platform's allow-list, so it ships with the package and works out-of-the-box. (The blob used to live in `config/ictrp.dat`, but platforms like SkillHub silently strip `*.dat`, which broke the shipped skill — hence the move to `config/keys.py`.)
 - **Resolution order (ct-base §5.236):** `CLI --token` > env `CT_REGISTRY_COZE_TOKEN` (legacy `ICTRP_WORKFLOW_TOKEN`; CDE standalone `CDE_WORKFLOW_TOKEN`) > embedded blob > legacy `.dat`. The embedded blob is the default; you normally never touch it.
 - **Keep it as-is — do not replace it with your own token** unless the author issues a new one. To override (e.g. after a re-issue), pass `--token <JWT>` on the CLI or export `CT_REGISTRY_COZE_TOKEN`; never paste tokens into chat.
-- **Obfuscated, not encrypted (ct-base §5.234):** the XOR+base64 encoding only hides the string from casual directory-listing / grep, not from a determined reader. Public shared credentials are allowed to ship with the package (§5.239/§5.243); private tokens must come from CLI/env only and are never written to disk.
+- **Obfuscated, not encrypted (ct-base §5.234):** the XOR+base64 encoding only hides the string from casual directory-listing / grep, not from a determined reader. Public shared credentials are allowed to ship with the package (§5.239/§5.243); private tokens must come from CLI/env only and are not persisted to disk.
 
 ## ⚠️ Safety
 
 - Default SAFE PREVIEW: scripts only generate / display; network runs only with explicit `--run`.
 - Reads public registry data ONLY — **zero confidential data or information input** (B-tier: ordinary input + public retrieval).
-- CDE automatable path is the unified endpoint (one long-lived token shared with WHO ICTRP via `config/keys.py`); the legacy standalone `search_cde_workflow.py` is archived locally under `CDE/` (NOT shipped with the package — local dev reference only, reachable via `--cde-legacy`). Only public query terms are sent; Bearer token REQUIRED (verified: HTTP 401 without it); still disclose "data via third party". CDE paste-mode (Playwright / `parse_cde.py`) remains a no-egress fallback.
+- CDE automatable path is the unified endpoint (one long-lived token shared with WHO ICTRP via `config/keys.py`); the legacy standalone `search_cde_workflow.py` is archived locally under `CDE/` (NOT shipped with the package — **RETIRED 2026-08-12**; `--cde-legacy` is now a no-op warning that auto-routes to the unified endpoint `search_ictrp.py --source chinadrugtrials`). Only public query terms are sent; Bearer token REQUIRED (verified: HTTP 401 without it); still disclose "data via third party". CDE paste-mode (Playwright / `parse_cde.py`) remains a no-egress fallback.
 - **Unified-endpoint token** — all Tier-2 sources share one long-lived Bearer token, embedded in `config/keys.py` as a public shared credential (XOR+base64 obfuscated, not a personal secret). Full resolution order, override, and history → **Coze key** above. Never paste tokens into chat — provide via CLI(`--token`) / env `CT_REGISTRY_COZE_TOKEN` only.
 - Output is for reference only, not a regulatory submission (CSR / filing must be generated per GCP separately).
+- **并发约束（P1-7）**：配额计数器 `config/usage.json` 与输出目录是技能目录内共享文件；`usage_guard.py` 已通过 advisory 文件锁串行化读写。建议**单技能单会话**运行；若多个 AI 会话并行调用同一技能目录，须依赖该锁，避免共享状态竞态导致计数或输出损坏。
 
 ## Search procedure
 
@@ -116,6 +117,24 @@ Execute in **forced order** (scope → translate → search). Full three-step pr
 1. **Scope** — pick registries. WHO+CDE already covers CT.gov/EU-CTR/ChiCTR/ISRCTN/DRKS (two endpoints only); WHO and CDE are **separate calls** (shared `demand_id`), never one request.
 2. **Keywords** — translate per source (English for CT.gov/WHO/PubChem; CDE needs Chinese, strip "类" suffix, e.g. use `drugs_name=列汀` not `DPP-4抑制剂`).
 3. **Execute** — direct sources free & unmetered; external-workflow sources counted once per `demand_id` (currently free, daily cap). Then `normalize → aggregate → report` (Excel final artifact; PDFs never auto-downloaded).
+
+> **⏱️ Retrieval time & data-volume guide**
+>
+> - A search typically takes **10 seconds ~ 3 minutes**; large result sets (broad keywords, deep pagination) can run up to **5 minutes**.
+> - If a search exceeds 5 minutes without finishing, the system **returns the partial results already retrieved** (instead of erroring) and marks the output with `is_timeout: true`.
+> - You may trade off wait-time vs. completeness: wait for full results, or accept a partial set for a quick preview.
+>
+> **📊 How many records fit in ~5 minutes?**
+>
+> Depends on query breadth; empirical ranges:
+>
+> | Keyword type | Typical hit count | Fully retrievable in 5 min? | Empirical throughput |
+> |---|---|---|---|
+> | Narrow (e.g. `osimertinib`) | 20-200 | ✅ easily | WHO ~100-150 pages/min, CDE ~200-300 pages/min |
+> | Medium (e.g. `diabetes`) | 5,000-50,000 | ❌ partial only | 5 min ≈ 1,000-1,500 records |
+> | Broad (e.g. `cancer`) | 100,000+ | ❌ tiny fraction | first page ~30s, ~2-3s/page (WHO) |
+>
+> - **If results are incomplete**: ① accept the partial set (sufficient for trend analysis); ② narrow the query (add intervention / sponsor / country filters); ③ split into multiple searches (by dimension).
 
 ## Errors
 
@@ -134,7 +153,7 @@ Execute in **forced order** (scope → translate → search). Full three-step pr
 
 ## Implementation
 
-Entry script: `ct_registry.py` (cross-source orchestration, auto keyword-localization, parallel batch retrieval, quota guard). Per-source wrappers live in `scripts/` (`search_ctgov.py`, `search_eu_ctr.py`, `search_ictrp.py`, `search_chictr.py`, `search_isrctn.py`, `search_drks.py`, `enrich_pubchem.py`, `normalize.py`, `aggregate.py`, `report.py`, `export_xlsx.py`, `download_docs.py`). The retired standalone CDE workflow is archived locally under `CDE/` (NOT shipped; `--cde-legacy` only).
+Entry script: `ct_registry.py` (cross-source orchestration, auto keyword-localization, parallel batch retrieval, quota guard) lives in `scripts/`. Outbound-calling per-source wrappers live in `adapters/` (the dedicated outbound directory per §16.9): `search_ctgov.py`, `search_eu_ctr.py`, `search_ictrp.py`, `search_chictr.py`, `search_isrctn.py`, `search_drks.py`, `search_cde.py`, `extsvc_client.py`, `enrich_pubchem.py`, `download_docs.py`, `fetch_eu_ctr_docs.py`. Pure-local compute stays in `scripts/`: `normalize.py`, `aggregate.py`, `report.py`, `export_xlsx.py`, `parse_cde.py` (no-egress paste-mode), `usage_guard.py`, `i18n.py`. The retired standalone CDE workflow is archived locally under `CDE/` (NOT shipped; **RETIRED 2026-08-12 — `--cde-legacy` is a no-op warning**).
 
 - CDE external-workflow modes, payload contract, decision flow, parameter mapping → **`CDE/cde_workflow.md`** (archived, local reference only).
 - Search procedure, scope rules, keyword gate → **`references/search_procedure.md`**.
@@ -143,7 +162,9 @@ Entry script: `ct_registry.py` (cross-source orchestration, auto keyword-localiz
 One-shot example:
 
 ```bash
-python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-cde --out-dir ./out --run
+# agent / non-interactive calls MUST add --no-expand (or --kw-en/--kw-zh / --kw-adopt),
+# otherwise the Keyword-System Confirmation Gate stops unconditionally (sys.exit) with no output
+python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-cde --no-expand --out-dir ./out --run
 ```
 
 ## Pipeline
@@ -152,3 +173,13 @@ python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-cde --ou
 - `ct-registry` → `ct-protocol`: similar-trial design benchmarking, aiding protocol writing.
 
 See `references/units.md` for the atomic-task unit index.
+
+## Bug Reporting (ct-base §20.3, adapter: `adapters/bug_report.py`)
+
+- **Trigger:** two paths — (A) **explicit user request** ("report a bug" / "反馈问题" / "提交错误报告"): go straight to two-stage confirmation, no strong signal needed, unlimited per session; (B) **strong signal** (CLI non-zero exit / engine or compute error / user explicitly questions the result) **and** the same operation was retried ≥1 → at most 1 unsolicited proposal/session. Weak signal (just repeated tuning) never triggers.
+- **Two-stage confirmation (2026-08-21, from three-stage):** ① propose-with-preview — show the bilingual `confirm_prompt` **together with** the full report (`render_report_text`, state "sanitized, no input data", invite a problem description; if the user adds one, re-render and re-show before consent) → ② on explicit consent, `send_to_endpoint` (auto action=report, endpoint `https://ct-bugreport.coze.site/run`, token = embedded §5 public credential). If the user declines, never re-propose this session.
+- **Post-send history回执 (2026-08-22):** after a successful send, the endpoint returns `history` (last submission for the same `query_origin`, or `""`). Compose the reply from `confirm_thanks(locale)` + `build_followup(history, locale)` — bilingual, auto-switched by `locale`: empty `history` → end; `history.resultstr == "done"` → also show the fix note from `history.memo`; otherwise show "not yet fixed". All user-facing strings are bilingual via `_MSGS` and `_current_locale()` auto-detection.
+- **Sanitization is hard:** the report carries only the 11-key whitelist (skill / version / error_type / error_code / engine_status / description / locale / query_origin / session_hash / attempts / test) — never raw data or subject records. `description` is the single free-text field for debugging, **user-reviewed**: write the symptom / reproduction / expected vs actual / algorithm or function used / error message; values and study design are OK. Hard boundary: no identifiable person/institution/subject info. The user reviews it in stage ① before consent; empty description omits the key. If the session had **no** cloud call, `save_local_report()` writes a local md + author email (data never leaves the machine).
+- **Client-only:** this adapter sends `report` only. Governance actions (get/update/download/delete — pull pending, mark done, download all, clean up) are reserved for the `ct-update` skill (author side); never call them from here.
+
+Invoke: `python adapters/bug_report.py --error-type <t> --description "<free text>" [--send]` (add `--send` only after the user confirms).

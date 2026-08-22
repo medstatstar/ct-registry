@@ -12,7 +12,7 @@ python scripts/search_ctgov.py --cond "non-small cell lung cancer" --status RECR
 # 2) CDE — external workflow (ARCHIVED LEGACY path; third-party; Bearer token required)
 #    NOTE: the standalone CDE endpoint is retired. Production uses the unified endpoint
 #    (search_ictrp.py --source chinadrugtrials). This workflow is preserved only under CDE/
-#    for local reference and is invoked via `ct_registry.py --cde-legacy`. NOT shipped with the package.
+#    for local reference only (the `--cde-legacy` switch is now a no-op warning that auto-routes to the unified endpoint). NOT shipped with the package.
 #    Need A · default keyword search -> project list  (mode=search is auto-set)
 python CDE/search_cde_workflow.py --keyword "奥希替尼" --run --out cde_list.json
 #    Need A · advanced search (structured filters; drugs_type / trial_status use the enum values)

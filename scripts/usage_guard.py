@@ -42,8 +42,9 @@ State file: ~/.workbuddy/skills/ct-registry/config/usage.json
 import datetime
 import json
 import os
+import time
 
-DAILY_LIMIT = 100  # 发布值：用户 2026-08-09 将文档规划值 20 上调至 100（取代测试期临时 2000）
+DAILY_LIMIT = 100  # 用户 2026-08-12 明确：测试配额与正式配额统一为 100（已取代测试期临时 2000 与早期文档规划值 20）
 # State file: default packaged path. Overridable via CT_USAGE_CONFIG so that
 # tests / CI / parallel sandboxes use an ISOLATED counter and never drain the
 # real shared daily quota (shipped in v0.3.47 regression-hardening).
@@ -55,6 +56,43 @@ AUTHOR_HINT = "（大批量检索需求请联系技能作者 Wintone 协调）"
 # Req2: make the "free but capped" policy explicit in every quota message.
 QUOTA_NOTE = ("当前免费使用；为充分利用共享资源，每日上限 100 个需求（按 demand_id 计），"
               "配额与资源使用详情见 README 的「配额与资源使用」小节。")
+
+
+def _lock_path():
+    return USAGE_PATH + ".lock"
+
+
+def _with_lock(fn, *a, **k):
+    """Serialize the read-modify-write of the shared usage counter across concurrent
+    sessions (P1-7, 2026-08-12). Advisory lockfile; a stale lock (>120s old) is broken
+    because a quota increment is sub-second. Fail-open: if the lock can't be taken we
+    still run fn so a lock glitch can never wedge the skill.
+    """
+    lock = _lock_path()
+    deadline = time.time() + 30
+    acquired = False
+    while time.time() < deadline:
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            os.close(fd)
+            acquired = True
+            break
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(lock) > 120:
+                    os.remove(lock)
+                    continue
+            except OSError:
+                pass
+            time.sleep(0.1)
+    try:
+        return fn(*a, **k)
+    finally:
+        if acquired:
+            try:
+                os.remove(lock)
+            except OSError:
+                pass
 
 
 def _today():
@@ -77,16 +115,7 @@ def _save(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def check(demand_id=None, source_label="WHO/CDE"):
-    """Call BEFORE a real network retrieval against the shared endpoint.
-
-    Charges **one counted call per demand_id** (idempotent within a day), NOT per
-    raw HTTP call. WHO + CDE + keyword tweaks + repeats that share the same
-    `demand_id` collapse to a single counted call.
-
-    Returns (allowed: bool, remaining: int, msg: str).
-    On allowed, increments + persists the daily counter (once per demand_id).
-    """
+def _apply_check(demand_id, source_label):
     data = _load()
     today = _today()
     if data.get("date") != today:
@@ -126,16 +155,23 @@ def check(demand_id=None, source_label="WHO/CDE"):
     return True, remaining, msg
 
 
-def peek(demand_id=None):
-    """Non-mutating remaining-quota probe (R7: adaptive scheduling).
+def check(demand_id=None, source_label="WHO/CDE"):
+    """Call BEFORE a real network retrieval against the shared endpoint.
 
-    Mirrors the date-roll + per-demand idempotency logic of check(), but
-    NEVER increments or persists the counter — safe to call during preview
-    or repeatedly before dispatch. Returns (remaining:int, blocked:bool):
-      * same demand already counted today -> (remaining, False)
-      * used >= DAILY_LIMIT                 -> (0, True)   # would be blocked
-      * otherwise                           -> (remaining, False)
+    Charges **one counted call per demand_id** (idempotent within a day), NOT per
+    raw HTTP call. WHO + CDE + keyword tweaks + repeats that share the same
+    `demand_id` collapse to a single counted call.
+
+    The read-modify-write of the shared counter is serialized via an advisory
+    lockfile (P1-7) so concurrent AI sessions never corrupt usage.json.
+
+    Returns (allowed: bool, remaining: int, msg: str).
+    On allowed, increments + persists the daily counter (once per demand_id).
     """
+    return _with_lock(_apply_check, demand_id, source_label)
+
+
+def _apply_peek(demand_id):
     data = _load()
     today = _today()
     used = int(data.get("count", 0)) if data.get("date") == today else 0
@@ -146,6 +182,22 @@ def peek(demand_id=None):
     if used >= DAILY_LIMIT:
         return 0, True
     return DAILY_LIMIT - used, False
+
+
+def peek(demand_id=None):
+    """Non-mutating remaining-quota probe (R7: adaptive scheduling).
+
+    Mirrors the date-roll + per-demand idempotency logic of check(), but
+    NEVER increments or persists the counter — safe to call during preview
+    or repeatedly before dispatch. Returns (remaining:int, blocked:bool):
+      * same demand already counted today -> (remaining, False)
+      * used >= DAILY_LIMIT                 -> (0, True)   # would be blocked
+      * otherwise                           -> (remaining, False)
+
+    Runs under the same advisory lockfile as check() (P1-7) so a concurrent
+    increment can't produce a stale probe result.
+    """
+    return _with_lock(_apply_peek, demand_id)
 
 
 if __name__ == "__main__":

@@ -17,13 +17,17 @@ ISRCTN / DRKS / ICTRP 各自拉回原始记录，聚合层做跨源去重，否�
 
 架构落点：归一化层保留各库原始记录；聚合层追加 dedup_group_id / primary_source /
 registry_id_norm / secondary_ids 四个字段，并产出 dedup_summary。
+
+P1-C: FDA 多模态数据整合（drug_approvals/shortages/recalls）
+P1-E: MinHash 预聚类替代 O(n²) 模糊匹配，降为近似 O(n log n)
 """
 import argparse
+import hashlib
 import json
 import os
 import re
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
@@ -182,10 +186,99 @@ def _field_count(rec):
                            "enrollment", "drug") if rec.get(k))
 
 
+# ── P1-E: MinHash pre-clustering ────────────────────────────────────────
+# Replace the O(n²) Tier-2 fuzzy match with an approximate O(n log n) approach:
+#   1. Compute a MinHash signature for each record's title_key (character n-grams).
+#   2. Hash signatures into bands; records sharing a band go into the same candidate bucket.
+#   3. Only compare pairs within the same bucket (dramatically fewer comparisons).
+# This is a pure-Python implementation using hashlib — no third-party dependencies.
+# The trade-off: a small false-negative rate (some true duplicates may be missed),
+# controlled by (num_bands, rows_per_band) parameters.
+
+def _ngrams(text, n=3):
+    """Generate character n-grams from text (used for MinHash signatures)."""
+    if not text:
+        return []
+    text = str(text).lower()
+    # pad with boundary chars for short texts
+    padded = f"^{text}$$"
+    return [padded[i:i+n] for i in range(len(padded) - n + 1)]
+
+
+def _minhash_signature(text, num_hashes=64, ngram_size=3):
+    """Compute a MinHash signature for a text string.
+
+    Uses multiple hash functions simulated via salted SHA-256.
+    Returns a tuple of integers (the signature).
+    """
+    grams = set(_ngrams(text, ngram_size))
+    if not grams:
+        return tuple([0] * num_hashes)
+    signature = []
+    for seed in range(num_hashes):
+        min_hash = None
+        for g in grams:
+            h = hashlib.sha256(f"{seed}:{g}".encode('utf-8')).hexdigest()
+            val = int(h[:8], 16)
+            if min_hash is None or val < min_hash:
+                min_hash = val
+        signature.append(min_hash)
+    return tuple(signature)
+
+
+def _lsh_buckets(signature, num_bands=8, rows_per_band=None):
+    """Hash a MinHash signature into LSH band buckets.
+
+    Returns a list of (band_idx, bucket_hash) tuples. Two records sharing
+    the same (band_idx, bucket_hash) are candidate duplicates.
+    """
+    if rows_per_band is None:
+        rows_per_band = max(1, len(signature) // num_bands)
+    buckets = []
+    for band_idx in range(num_bands):
+        start = band_idx * rows_per_band
+        end = start + rows_per_band
+        if end > len(signature):
+            break
+        band_slice = signature[start:end]
+        bucket_hash = hashlib.sha256(
+            f"{band_idx}:{band_slice}".encode('utf-8')).hexdigest()[:12]
+        buckets.append((band_idx, bucket_hash))
+    return buckets
+
+
+def _minhash_candidate_pairs(records, sig_list, num_bands=8, num_hashes=64):
+    """Find candidate duplicate pairs using LSH pre-clustering.
+
+    Returns a set of (i, j) index pairs (i < j) that share at least one LSH bucket.
+    This replaces the O(n²) all-pairs comparison with near-linear candidate generation.
+    """
+    # Build LSH index: band -> set of record indices
+    band_index = defaultdict(set)
+    signatures = []
+    for i, sig_text in enumerate(sig_list):
+        sig = _minhash_signature(sig_text, num_hashes=num_hashes)
+        signatures.append(sig)
+        for bucket_key in _lsh_buckets(sig, num_bands=num_bands):
+            band_index[bucket_key].add(i)
+    # Generate candidate pairs from bands
+    candidates = set()
+    for bucket_members in band_index.values():
+        if len(bucket_members) < 2:
+            continue
+        members = sorted(bucket_members)
+        for a in range(len(members)):
+            for b in range(a + 1, len(members)):
+                candidates.add((members[a], members[b]))
+    return candidates, signatures
+
+
 def dedup(records):
     """Group records into de-duplication clusters; tag primary_source + group id.
 
     Returns (tagged_records, summary).
+
+    P1-E: Tier-2 fuzzy match uses MinHash + LSH pre-clustering for near O(n log n) performance.
     """
     n = len(records)
     parent = list(range(n))
@@ -210,8 +303,9 @@ def dedup(records):
             else:
                 id_to_idx[rid] = i
 
-    # --- Tier 2: fuzzy match (title + sponsor + year + intervention) ---
+    # --- Tier 2: fuzzy match with MinHash + LSH pre-clustering (P1-E) ---
     sig = []
+    sig_text = []  # raw title_key for MinHash
     for rec in records:
         tk = _title_key(rec.get("title"))
         sp = _norm_text(rec.get("sponsor"))
@@ -219,25 +313,28 @@ def dedup(records):
         iv = _norm_text((rec.get("interventions") or [None])[0] if isinstance(
             rec.get("interventions"), list) else rec.get("interventions"))
         sig.append((tk, sp, yr, iv))
-    for i in range(n):
-        if not sig[i][0]:  # no usable title key -> cannot fuzzy match
+        sig_text.append(tk)
+
+    # Use LSH to find candidate pairs (near-linear)
+    candidates, _ = _minhash_candidate_pairs(records, sig_text, num_bands=8, num_hashes=64)
+
+    # Verify candidates with the original fuzzy match logic
+    for i, j in candidates:
+        if not sig[i][0] or not sig[j][0]:
             continue
-        for j in range(i + 1, n):
-            if not sig[j][0]:
-                continue
-            if find(i) == find(j):
-                continue
-            tk_i, sp_i, yr_i, iv_i = sig[i]
-            tk_j, sp_j, yr_j, iv_j = sig[j]
-            title_ok = _title_match(tk_i, tk_j)
-            if not title_ok:
-                continue
-            sponsor_ok = (sp_i and sp_i == sp_j)
-            year_ok = (yr_i and yr_j and yr_i == yr_j)
-            iv_ok = (iv_i and iv_i == iv_j)
-            # title must match; sponsor/year/intervention at least one corroborates
-            if sponsor_ok or year_ok or iv_ok:
-                union(i, j)
+        if find(i) == find(j):
+            continue
+        tk_i, sp_i, yr_i, iv_i = sig[i]
+        tk_j, sp_j, yr_j, iv_j = sig[j]
+        title_ok = _title_match(tk_i, tk_j)
+        if not title_ok:
+            continue
+        sponsor_ok = (sp_i and sp_i == sp_j)
+        year_ok = (yr_i and yr_j and yr_i == yr_j)
+        iv_ok = (iv_i and iv_i == iv_j)
+        # title must match; sponsor/year/intervention at least one corroborates
+        if sponsor_ok or year_ok or iv_ok:
+            union(i, j)
 
     # --- assign group ids + collect members ---
     groups = {}
@@ -275,11 +372,84 @@ def dedup(records):
         "deduped_total": len(groups),
         "removed": n - len(groups),
         "cross_source_groups": cross_source,
+        "minhash_candidates": len(candidates),
+        "minhash_bands": 8,
     }
     return tagged, summary
 
 
-def aggregate(records):
+# ── P1-C: FDA event integration ──────────────────────────────────────────
+# Load local FDA event cache (OpenFDA public data exported to JSON).
+# Each event: {"event_type": "drug_approval"|"shortage"|"recall", "drug": "...", "date": "...", "detail": "..."}
+# The cache file is maintained externally (quarterly update script) and NOT fetched at runtime.
+
+def _load_fda_events(cache_path=None):
+    """Load FDA events from a local JSON cache file.
+
+    Expected format: {"drug_approvals": [...], "shortages": [...], "recalls": [...]}
+    Each item: {"drug": "...", "date": "YYYY-MM-DD", "detail": "..."}
+
+    Returns a dict keyed by lowercase drug name for fast lookup.
+    """
+    if cache_path is None:
+        cache_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "..", "references", "fda_events_cache.json")
+    if not os.path.exists(cache_path):
+        return {}
+    try:
+        with open(cache_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return {}
+    events_by_drug = defaultdict(list)
+    for event_type in ("drug_approvals", "shortages", "recalls"):
+        for item in data.get(event_type, []):
+            drug = (item.get("drug") or "").strip().lower()
+            if drug:
+                events_by_drug[drug].append({
+                    "event_type": event_type.rstrip('s'),  # drug_approval / shortage / recall
+                    "date": item.get("date"),
+                    "detail": item.get("detail", ""),
+                })
+    return dict(events_by_drug)
+
+
+def _match_fda_events(records, fda_events):
+    """Match FDA events to trial records by drug name.
+
+    For each primary record, look up its drug field in the FDA events cache.
+    Returns a summary dict with counts and matched events per drug.
+    """
+    if not fda_events:
+        return {"available": False, "matched_drugs": 0, "total_events": 0, "events_by_type": {}}
+    matched = {}
+    events_by_type = Counter()
+    for rec in records:
+        drug = (rec.get("drug") or "").strip().lower()
+        if not drug:
+            continue
+        # exact match + partial match (e.g. "pembrolizumab" matches "keytruda (pembrolizumab)")
+        events = fda_events.get(drug, [])
+        if not events:
+            # try partial: any FDA drug that is a substring of trial drug or vice versa
+            for fda_drug, evts in fda_events.items():
+                if fda_drug in drug or drug in fda_drug:
+                    events = evts
+                    break
+        if events:
+            matched[drug] = events
+            for e in events:
+                events_by_type[e["event_type"]] += 1
+    return {
+        "available": True,
+        "matched_drugs": len(matched),
+        "total_events": sum(len(v) for v in matched.values()),
+        "events_by_type": dict(events_by_type),
+        "matched": matched,
+    }
+
+
+def aggregate(records, fda_cache_path=None):
     # de-duplicate first; distributions computed on PRIMARY records only
     tagged, dsum = dedup(records)
     primaries = [r for r in tagged if r.get("primary_source")]
@@ -314,6 +484,11 @@ def aggregate(records):
                 r.get("sponsor_key") or sponsor_key(r.get("sponsor"))
                 or r.get("sponsor"))
     competitor_map = {c: len(s) for c, s in comp.items()}
+
+    # P1-C: FDA event integration (local cache only, no network)
+    fda_events = _load_fda_events(fda_cache_path)
+    fda_summary = _match_fda_events(primaries, fda_events)
+
     return {
         "total": len(primaries),
         "phase_dist": dict(phase.most_common()),
@@ -321,6 +496,7 @@ def aggregate(records):
         "top_sponsors": dict(sponsor.most_common(10)),
         "timeline": dict(sorted(years.items())),
         "competitor_map": dict(sorted(competitor_map.items(), key=lambda x: -x[1])[:20]),
+        "fda_events": fda_summary,
         "dedup_summary": dsum,
         "records": primaries,
         "records_all": tagged,
@@ -331,16 +507,23 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--in", dest="inp", required=True)
     ap.add_argument("--out", default="agg.json")
+    ap.add_argument("--fda-cache", dest="fda_cache", default=None,
+                    help="path to local FDA events cache JSON (default: ../references/fda_events_cache.json)")
     args = ap.parse_args()
     with open(args.inp, encoding="utf-8") as f:
         records = json.load(f)
-    agg = aggregate(records)
+    agg = aggregate(records, fda_cache_path=args.fda_cache)
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump(agg, f, ensure_ascii=False, indent=2)
     d = agg["dedup_summary"]
     print(f"[aggregate] raw={d['raw_total']} groups={d['groups']} "
           f"deduped={d['deduped_total']} removed={d['removed']} "
-          f"cross_source={d['cross_source_groups']} -> {args.out}")
+          f"cross_source={d['cross_source_groups']} "
+          f"minhash_candidates={d.get('minhash_candidates', 'n/a')} -> {args.out}")
+    fda = agg.get("fda_events", {})
+    if fda.get("available"):
+        print(f"[aggregate] FDA events: {fda['matched_drugs']} drugs matched, "
+              f"{fda['total_events']} total events ({fda['events_by_type']})")
 
 
 if __name__ == "__main__":

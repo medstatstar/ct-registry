@@ -15,9 +15,7 @@
 
 ## U2: External-workflow & China sources (CDE / ChiCTR / ISRCTN / DRKS / WHO ICTRP)
 
-> Architecture (2026-07-24): **NEVER use Playwright / a headless browser.** Chinese registries
-> (CDE, ChiCTR) and WebForms portals uniformly block automated browsers via WAF fingerprint
-> checks — a verified platform limitation, not a tooling gap. Sources split into two tiers:
+> Architecture (2026-07-24, revised 2026-08-13): **The skill's own direct-retrieval scripts avoid browser automation (Tier 1 is pure HTTP).** However, browser use DOES occur in two places, so "no browser" is not a blanket guarantee: (a) the **unified third-party endpoint (Tier 2) performs Playwright/headless-Chromium server-side** on our behalf — that automation runs at the vendor, not locally; (b) the **CDE paste-mode local fallback (`parse_cde.py`) uses Playwright locally** when the user pastes a CDE page. Chinese registries (CDE, ChiCTR) and WebForms portals uniformly block *automated* browsers via WAF fingerprint checks, which is why direct browser scraping from this skill is avoided in favour of the workflow. Sources split into two tiers:
 > - **Tier 1 (direct, pure HTTP):** CT.gov v2 REST API, EU CTR legacy EudraCT HTML parse
 >   (`search_eu_ctr.py`), PubChem PUG-REST. No token, no browser.
 > - **Tier 2 (external workflow, Bearer token):** a third-party endpoint retrieves on our behalf
@@ -34,9 +32,10 @@
 ### U2a: search_cde / China CDE (药物临床试验登记与信息公示平台)
 
 > SafeDog WAF blocks even headless Chrome (verified). The **recommended automatable path**
-> is the external workflow (`CDE/search_cde_workflow.py`, archived under `CDE/`, NOT shipped → default
-> `ct-searchcde.coze.site/run` (original spec; an alternative `h2ybbswdjq.coze.site/run`
-> is also valid): sends only public query terms, returns JSON. Paste-mode local
+> is the external workflow via the **unified endpoint** `search_ictrp.py --source chinadrugtrials`
+> (`ct-search.coze.site/run`). The legacy standalone `CDE/search_cde_workflow.py` (original spec
+> `ct-searchcde.coze.site/run`, archived under `CDE/`, NOT shipped) is **RETIRED 2026-08-12**
+> (an alternative `h2ybbswdjq.coze.site/run` also existed): sends only public query terms, returns JSON. Paste-mode local
 > parse stays a no-egress fallback. Egress note: only public query terms leave
 > the environment; no confidential subject / protocol / CRF data — compliant with the ct-base red
 > line.

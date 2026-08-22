@@ -108,25 +108,3 @@ def get_token(cli_token: str = None, token_env: str = None) -> str:
     return get_secret("coze_unified", cli_token, token_env)
 
 
-def config_path(source: str) -> str:
-    """遗留兼容：返回旧 .dat 路径（仅回退读取用，不再作为发布机制）。"""
-    return os.path.expanduser(
-        f"~/.workbuddy/skills/ct-registry/config/{source.lower()}.dat")
-
-
-def store_token(plain: str, token_path: str = None) -> str:
-    """可选：把 token 混淆落盘到本地 .dat（gitignored），供需要覆盖内嵌值的高级用户。
-
-    注意：这不是发布机制，仅本地覆盖；默认不再经 CLI 暴露（对齐 ct-advisor 0.9.48）。
-    绝不把明文写入日志。
-    """
-    path = token_path or LEGACY_DAT_PATH
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    blob = _obf_encode(plain)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(blob)
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
-    return path

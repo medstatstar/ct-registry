@@ -132,8 +132,15 @@ List-mode search returns only summary fields. `sponsor` and `phase` are populate
 **Is it free, and is there a quota?**
 Currently free. The shared third-party endpoint is metered by **demand** (one user request = 1 demand; WHO + CDE + keyword tweaks within it collapse to 1). Daily cap is 100 demands; direct Tier-1 sources (CT.gov v2, EU-CTR, PubChem) and preview are not counted.
 
+**Concurrency / parallel sessions (P1-7)?** The quota counter `config/usage.json` and the output dir are shared files inside the skill directory. `usage_guard.py` serialises their read-modify-write with an advisory file lock, so parallel calls won't corrupt the counter. Best practice is still **one skill per session**; if multiple AI sessions drive the same skill directory at once, rely on that lock and avoid sharing an `out_dir`.
+
+**CDE standalone endpoint status?** The original standalone CDE endpoint `ct-searchcde.coze.site/run` (`CDE/search_cde_workflow.py`) was **RETIRED on 2026-08-12**; `--cde-legacy` now only prints a deprecation warning and auto-routes to the unified endpoint `search_ictrp.py --source chinadrugtrials`. CDE/ is local-archive only and not shipped.
+
 **Is the result a regulatory submission?**
 No. Output is for reference / planning only. CSR / filing documents must be produced separately per GCP.
+
+**Is the retrieval compliant, and does it hit rate limits?**
+All queries go through official public APIs / public search interfaces (CT.gov v2, EU-CTR, PubChem, WHO ICTRP, China CDE unified endpoint) — no scraping of non-public pages, no bypassing of site protections. The backend calls third-party endpoints **serially with exponential backoff**, honouring their rate limits; on 429 / timeout it retries with backoff rather than hammering them. The 5-minute gateway cap on global mirrors (14+ registries) is a compliant wait, not a throttling penalty.
 
 ## Before You Run — Time & Data Limits
 
@@ -141,6 +148,16 @@ When you mirror 14+ registries through WHO ICTRP in one call, the backend litera
 
 - **How long:** a live retrieval typically takes **1–5 minutes** to come back. The skill first hands you a "submitted, running" receipt, then polls automatically and delivers the result when ready — you don't have to babysit it.
 - **Why it can hug the 5-minute ceiling:** the unified third-party endpoint sits behind a hard **5-minute gateway cap**. The workflow uses **P4 async fire-and-forget** (`/run` returns immediately with a `run_id`, then polls `/run/status/{run_id}` with exponential backoff) to bypass this wall. Broad queries like `cancer`, or "global + no country filter", can run right up against that wall and, rarely, time out. If it does, the skill tells you explicitly instead of silently dropping data.
+- **What happens after 5 minutes:** if the retrieval volume exceeds the 5-minute cap and still isn't complete, the system **returns whatever partial results have been collected so far** (rather than erroring out), and marks the output with `is_timeout: true`. You can trade off between wait time and data completeness: wait longer for full results, or accept partial results for a quick preview.
+- **Roughly how many records in 5 minutes:** it depends on how broad the query is:
+
+  | Keyword type | Typical hit count | Can 5 min finish? | Empirical throughput |
+  |-------------|------------------|-------------------|---------------------|
+  | Narrow (e.g. `osimertinib`) | 20-200 | ✅ Easily | WHO ~100-150 pages/min, CDE ~200-300 pages/min |
+  | Medium (e.g. `diabetes`) | 5,000-50,000 | ❌ Partial only | 5 min ≈ 1000-1500 records |
+  | Broad (e.g. `cancer`) | 100,000+ | ❌ Only a small fraction | First page ~30s, ~2-3s/page thereafter (WHO) |
+
+  What to do when you can't get everything: ① Accept partial results (enough for trend analysis); ② Narrow the scope (add intervention / sponsor / country filters); ③ Split into multiple queries (by dimension).
 - **How to keep the data volume sane:** WHO global results can be huge. If a query returns too few rows or times out, it's usually **too broad** — narrow the keyword (e.g. `osimertinib` instead of `cancer`), or use **advanced search** (just say "advanced search" in conversation; the code auto-builds precise `drug AND condition` filters, returning a smaller, faster set). There's also a **daily cap of 100 demands** (see FAQ above) — normal use won't get near it.
 
 ## Safety (safe preview)
@@ -157,6 +174,9 @@ When you mirror 14+ registries through WHO ICTRP in one call, the backend litera
 - **EU-CTR** — pure-HTTP HTML parse of legacy EudraCT results (direct, no token, no browser).
 - **WHO ICTRP** — unified Coze `/run` endpoint (third-party, Bearer token required); one call mirrors 14+ registries.
 - **ChiCTR / ISRCTN / DRKS** — served by the **same** unified Coze `/run` endpoint via `source=chictr|isrctn|drks` (third-party, shared token).
+- **Bug reports (optional, opt-in only):** if a likely skill defect is detected, the assistant may ask to send a **sanitized** bug report to the unified report endpoint `https://ct-bugreport.coze.site/run` (skill name/version/error type plus a problem description you review and approve — never your raw data). Nothing is sent without your confirmation; you can always decline.
+
+**First-outbound confirmation.** The first time a search sends your terms to the unified endpoint, you'll see a one-time confirmation prompt (target server + what is sent = your public search terms, no personal info). After you approve, the endpoint is whitelisted and you won't be asked again this session. This follows the ct-base §5 library-wide outbound-authorization norm. Nothing is sent until you approve or say "run it".
 
 WHO ICTRP and China CDE **share one long-lived token** on the unified endpoint. It is a PUBLIC shared credential, embedded as an XOR+base64 blob in `config/keys.py` (shipped with the package) so it works out-of-the-box. Resolution order: CLI(`--token`) > env(`CT_REGISTRY_COZE_TOKEN`, legacy `ICTRP_WORKFLOW_TOKEN`) > embedded blob (ct-base §5.236). No confidential data ever reaches any of these endpoints.
 
@@ -169,9 +189,22 @@ The unified Coze endpoint `https://ct-search.coze.site/run` (used by CDE, WHO IC
 - **Obfuscated, not encrypted:** the encoding hides the string from casual viewing, not from a determined reader. Treat it as a credential, not a secret to protect at all costs.
 - **Security scanners:** some automated scanners flag `extsvc_client.py` (HTTP/Bearer usage). The blob is a public shared credential, not a private key — there is no private secret in the repo. Override via CLI/env only.
 
+## Why You Can Trust the Results (anti-hallucination)
+
+Every row in the output is **retrieved, not invented**:
+
+- **Source-authoritative.** Records come straight from the registries' own APIs / endpoints (ClinicalTrials.gov v2, PubChem PUG-REST, EU-CTR HTML, and the unified Coze endpoint for CDE / WHO / ChiCTR / ISRCTN / DRKS). No LLM generation sits between you and the source data.
+- **Rule-based normalization.** Merging / field mapping (phase, status, sponsor…) is deterministic code, not free-text rewriting. Raw values (CDE Chinese status, indication, etc.) are kept **verbatim** — never translated or altered.
+- **Counts are echoed, not estimated.** Totals and per-source breakdowns are taken directly from each source's response; the skill does not round, guess, or extrapolate counts.
+- **Known limits are labelled, not hidden.** A broad query that hits the 5-minute gateway returns **partial** results marked `is_timeout: true` (see *Before You Run — Time & Data Limits*); list-mode rows show `Unknown` for sponsor / phase (populated only by detail mode). These caveats are printed, not silently dropped.
+
+Caveat: registries update on their own cadence and may have gaps or lags; always cross-check against the source before any regulatory / submission use.
+
 ## Advanced Reference
 
 > The commands below are for developers / power users. In normal conversation you do **not** type these — the assistant builds and runs them for you behind the safe-preview gate.
+>
+> ⚠️ Commands that include `--run` perform **live network retrieval** (public query terms egress to the endpoints above). Omit `--run` — or stay in the conversation safe-preview — for the default **no-network plan** that prints only the intended call.
 
 ### Requirements
 - Python 3.10+ (Anaconda recommended).
@@ -184,65 +217,48 @@ python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-pubchem 
 ```
 
 ### Cross-source orchestration (CT.gov + CDE merged into the SAME landscape)
-```bash
-# English primary term: CT.gov uses it as-is; CDE keyword auto-derived to Chinese
-python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-cde --out-dir ./out --run
-# Chinese primary term: CT.gov auto-translated to English; CDE uses it as-is (silent fallback to EN if ZH=0)
-python scripts/ct_registry.py --cond "非小细胞肺癌" --status RECRUITING --with-cde --out-dir ./out --run
-# explicit CDE keyword override (silent fallback to EN if ZH=0)
-python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-cde --cde-keyword "高血压" --out-dir ./out --run
-# advanced filter on CDE (drug + indication + status), merged
-python scripts/ct_registry.py --cond "NSCLC" --with-cde --cde-mode combined --cde-keyword "678" --cde-trial-status "已完成" --run
-# multi-keyword AND on CDE, merged
-python scripts/ct_registry.py --cond "NSCLC" --with-cde --cde-multi-keywords "高血压 糖尿病" --run
-```
+Merge CT.gov + CDE in one run: English / Chinese primary terms with auto keyword localization, explicit CDE keyword override, advanced filters (`--cde-mode combined`), and multi-keyword AND (`--cde-multi-keywords`). Full CLI examples: `references/cli_reference.md`.
 
 ### Full landscape (Tier-1 + Tier-2 external services)
-```bash
-python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING \
-    --with-euctr --with-cde --with-chictr --with-isrctn --with-drks --with-ictrp \
-    --out-dir ./out --run
-```
+One invocation covering CT.gov + EU-CTR + CDE + ChiCTR + ISRCTN + DRKS + WHO ICTRP, merged and aggregated into one report. Full CLI example: `references/cli_reference.md`.
 
 ### Per-source direct scripts
 ```bash
 # CT.gov (required, official API)
 python scripts/search_ctgov.py --cond "non-small cell lung cancer" --status RECRUITING --max 50 --out ctgov.json
-# EU-CTR (pure-HTTP HTML parse, no token)
-python scripts/search_eu_ctr.py --q "cancer" --run --out euctr.json
+# CT.gov advanced search (full v2 query.* / filter.* coverage, v0.3.84+)
+python scripts/search_ctgov.py \
+  --cond "non-small cell lung cancer" \
+  --phase PHASE1,PHASE3 --study-type INTERVENTIONAL \
+  --status RECRUITING,COMPLETED \
+  --start-date-since 2023-01-01 --last-update-until 2026-08-01 \
+  --sort LastUpdatePostDate:desc --has-results --fields NCTId,BriefTitle --max 10
+# CT.gov raw Expert Search expression passthrough (paste from website advanced search)
+python scripts/search_ctgov.py --adv 'AREA[StudyType]OBSERVATIONAL AND AREA[LocationCountry]China' --max 5
 # PubChem drug -> target
 python scripts/enrich_pubchem.py --drug "osimertinib" --targets --out pubchem.json
 ```
 
-### Unified endpoint (WHO ICTRP + China CDE + ChiCTR / ISRCTN / DRKS)
-```bash
-# Recommended: unified Coze /run endpoint (WHO + CDE share one token embedded in config/keys.py)
-python scripts/search_ictrp.py --source who --q "osimertinib" --run --out ictrp.json
-python scripts/search_ictrp.py --source chinadrugtrials --q "高血压" --run --out cde_list.json
-python scripts/search_ictrp.py --source chinadrugtrials --q "678" --drugs-name "帕博利珠单抗" --trial-status "进行中" --run --out cde_list.json
-python scripts/search_ictrp.py --source chinadrugtrials --q "高血压 糖尿病" --run --out cde_list.json
-python scripts/search_ictrp.py --source chictr --q "肺癌" --run --out chictr.json
-python scripts/search_ictrp.py --source isrctn --q "cancer" --run --out isrctn.json
-python scripts/search_ictrp.py --source drks --q "diabetes" --run --out drks.json
-# Legacy standalone CDE endpoint (archived locally under CDE/, NOT shipped; FALLBACK reference only)
-python CDE/search_cde_workflow.py --keyword "奥希替尼" --run --out cde_list.json
-# Token is embedded in config/keys.py (shipped) — no manual step needed.
-# To override on a rare 403, set CT_REGISTRY_COZE_TOKEN env or pass --token.
-```
+> **CT.gov advanced flags** (v0.3.85+, full list via `--help`): `--query` (query.term, AREA[] ok),
+> `--titles` `--outc` `--lead` `--id` `--locn` `--patient` (other query.*),
+> `--adv` (raw filter.advanced), `--phase` `--study-type` `--age-group` `--sex` `--has-results`
+> (assembled into `filter.advanced` AREA[] expressions, AND-combined with `--adv`),
+> `--sort` (max 2; `field[:asc|:desc]` or `@relevance`), `--ids` (NCT batch), `--geo`
+> (`distance(lat,lon,dist)` or bare `lat,lon,dist`; 1-500 mi / 1-805 km enforced), `--fields`,
+> server-side date ranges `--first-post-since/--until`, `--last-update-*`,
+> `--start-date-*`, `--primary-completion-*`, `--completion-*`, multi-value `--status`,
+> and `--post-status/--post-ids/--post-geo/--post-adv` (postFilter.* — same semantics but
+> does NOT affect relevance ranking).
+> NOTE: v2 has no flat phase/studyType/date params — they all go through `filter.advanced`;
+> `query.rmtln` is a **v1 legacy param removed in v2** (HTTP 400, verified against the live
+> API 2026-08-13) — use `--query`/`--adv` for remote-trial search;
+> `--date-after` keeps the legacy local post-filter (start-year lower bound).
 
-### CDE four calling modes (auto-judged; flags shown for reference)
-```bash
-# Mode search (default keyword OR advanced filters)
-python CDE/search_cde_workflow.py --drugs-name "帕博利珠单抗" --indication "非小细胞肺癌" --drugs-type "化学药物" --appliers "默沙东" --trial-status "进行中" --run
-# Mode combined (keyword + advanced filter)
-python CDE/search_cde_workflow.py --mode combined --keyword "678" --trial-status "已完成" --run
-# Mode multi_keyword (space-separated AND)
-python CDE/search_cde_workflow.py --mode multi_keyword --multi-keywords "高血压 糖尿病" --run
-# Mode detail (project list -> parallel 65-field fetch; auto-run if <=100, confirm if >100)
-python CDE/search_cde_workflow.py --project-list cde_list.json --run --out cde_detail.json
-# Preview only (default, no network)
-python CDE/search_cde_workflow.py --keyword "奥希替尼"
-```
+### Unified endpoint (WHO ICTRP + China CDE + ChiCTR / ISRCTN / DRKS)
+WHO + CDE + ChiCTR / ISRCTN / DRKS share one Coze endpoint; the token is embedded in `config/keys.py` (shipped) — no manual step needed. To override on a rare 403, set `CT_REGISTRY_COZE_TOKEN` env or pass `--token`. Per-source CLI examples: `references/cli_reference.md`.
+
+### CDE four calling modes (RETIRED 2026-08-12; local archive reference only; production uses the unified endpoint)
+Production CDE retrieval goes through the unified endpoint above; the retired standalone workflow is archived locally under `CDE/` (NOT shipped).
 
 ### Normalize → aggregate → report → Excel
 ```bash
@@ -255,14 +271,22 @@ python scripts/export_xlsx.py --in normalized.json --out report.xlsx --title "As
 ```
 
 ### Structured detail + confirm-gated PDF download
-```bash
-python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING \
-    --with-cde --with-euctr --with-detail --out-dir ./out --run
-# Actually download the listed EU-CTR PDFs (explicit confirmation gate)
-python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING \
-    --with-cde --with-euctr --with-detail --download-docs --out-dir ./out --run
-python scripts/download_docs.py --in ./out/normalized.json --out-dir ./out/docs --yes
-```
+Detail fetch (≤100 items auto, >100 confirm) and PDF download are gated by explicit confirmation; PDFs are never auto-downloaded. Direct doc download is resumable (skips existing files). CLI examples: `references/cli_reference.md`.
+
+> ⚠️ **Document-download duration & volume warning (measured 2026-08-12)**
+> `download_docs.py` downloads **sequentially** (one file at a time, no concurrency) and has **no built-in quantity cap** — it pulls every `documents[].url` in the input JSON. Only **EU-CTR** yields real downloadable links (CDE / WHO / CT.gov expose no protocol-PDF API), so a broad EU-CTR search (e.g. 40 records × ~3 docs each) can mean **100+ sequential downloads**.
+>
+> **Measured behavior (sandbox, 2026-08-12):**
+> - Per-file hard timeout `--timeout` default **60s**; on failure it prints `FAILED` and moves on — there is **no retry loop** (the docstring says "per-file retries" but the code only tries once).
+> - Round-trip latency to `euclinicaltrials.eu` ≈ **1–3 s/request**.
+> - This sandbox's egress is throttled to ~20–30 KB/s, so a 3 MB PDF would hit the 60s timeout and be **skipped** — i.e. in a throttled network, large docs fail. Production (Coze) bandwidth is normally far higher, but **don't assume** a doc will finish.
+>
+> **Planning rule of thumb:** total wall-clock ≈ `N_files × per_file_time`, with a **worst-case ceiling of `N_files × 60s`** (a hung file burns the full timeout before skipping). For 100 files that is up to ~100 min in the worst case. EU-CTR protocol / IB / CSR PDFs are commonly 0.5–15 MB, so real per-file time varies with doc size and deployment bandwidth.
+>
+> **Mitigations:**
+> - Cap how many docs are gathered: `fetch_eu_ctr_docs.py --max N` and/or download only a subset of records.
+> - Download in small confirmed batches; re-run is safe — files already in `--out-dir` are **skipped** (resumable).
+> - If you see many `FAILED … timed out`, raise `--timeout` (e.g. `--timeout 180`) or run from a faster network.
 
 ### WHO ICTRP advanced fields (subset → CLI)
 `--who-title` (+ operator), `--who-condition`, `--who-intervention` (alias `--intr`), `--who-recruitment-status` (alias `--status`), `--who-sponsor`, `--who-country`, `--who-phase` (comma-separated), `--who-date-start` / `--who-date-end` (DD/MM/YYYY), `--who-with-results`, `--who-secondary-id`. Any structured field auto-selects `mode=combined`.
@@ -271,7 +295,7 @@ python scripts/download_docs.py --in ./out/normalized.json --out-dir ./out/docs 
 `--reg-no`, `--indication`, `--case-no`, `--drugs-name`, `--drugs-type` (enum: 中药/天然药物/化学药物/生物制品), `--appliers`, `--communities`, `--researchers`, `--agencies`, `--trial-status` (11-value enum: 进行中/尚未招募/招募中/招募完成/已完成/主动暂停/主动终止/IEC·IRB暂停/IEC·IRB终止/责令暂停/责令终止). Note: CDE advanced UI has **no phase filter** — phase is post-filtered from detail.
 
 ### Interaction contract (two gates)
-- **Gate 1 — Pre-search brief (before `--run`):** the assistant prints keywords (EN+ZH per source), scope, any time/status filter, the `demand_id` grouping + quota impact, and the "free, 100 demands/day" note. It asks only when there is a real choice.
+- **Gate 1 — Pre-search brief (before any live-network call):** the assistant prints keywords (EN+ZH per source), scope, any time/status filter, the `demand_id` grouping + quota impact, and the "free, 100 demands/day" note. It asks only when there is a real choice.
 - **Gate 2 — Post-list confirmation:** it presents the list (count, scope, sample rows, `Unknown` phase/sponsor caveat). Detail fetch: ≤100 items auto-runs; >100 items confirm first. PDFs are never auto-downloaded.
 
 ### Errors (quick reference)
@@ -290,16 +314,16 @@ python scripts/download_docs.py --in ./out/normalized.json --out-dir ./out/docs 
 
 ---
 
-**Version**: v0.3.78 | **License**: MIT | **Authors**: medstatstar, phoe-zip
+**Version**: v0.3.81 | **License**: MIT | **Authors**: medstatstar, phoe-zip
 
 For feature requests, bug reports, or other feedback, please contact the author directly at medstatstar@gmail.com (Wintone Zhang / 张文彤).
 
 ## Confidentiality Notice
 
-> The CT series consists of 16+ specialized domain skills, organized into four tiers — A, B, C, D — by "confidential-data-exfiltration risk + whether external retrieval is needed", providing full coverage of the entire new-drug clinical trial (Clinical Trial) lifecycle.
+> The CT series consists of 20+ specialized domain skills, organized into two tiers — A, B — by "confidential-data-exfiltration risk + whether external retrieval is needed", providing full coverage of the entire new-drug clinical trial (Clinical Trial) lifecycle.
 >
-> - **Tier A / B (non-confidential)**: run fully locally using only ordinary data; Tier B may need external public retrieval but involves no confidential information. These skills are published openly on GitHub.
-> - **Tier C / D (confidential)**: involve strictly confidential clinical-trial data and internal information from pharma sponsors (e.g., ct-analysis, ct-sdtm); Tier C is processed locally and never leaves the boundary, while Tier D additionally requires policy approval. These skills are designated for internal enterprise use only and are not publicly released at present.
+> - **Tier A (non-confidential · public)**: takes only ordinary (non-confidential) input; runs fully locally (`network=off`) or performs public retrieval (`network=public-retrieval`, e.g. ct-registry / ct-advisor) — never involves confidential information. Tier A skills are published openly on GitHub.
+> - **Tier B (confidential · internal)**: involve strictly confidential clinical-trial data and internal information from pharma sponsors (e.g., ct-analysis, ct-sdtm, ct-eligibility); Tier B is processed locally (`egress=none`, data never leaves the machine) or requires approved egress (`egress=approval-req`, e.g. ct-eligibility). These skills are designated for internal enterprise use only and are not publicly released at present.
 >
 > If you do have a genuine need for these confidential skills, please contact the author to request custom installation.
 >
