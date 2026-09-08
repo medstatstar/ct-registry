@@ -1,4 +1,5 @@
-# ct-registry 公共凭据配置 —— 随技能包发布（.py 后缀，不会被发布平台静默剥离）。
+# ct-registry 端点凭据模块（endpoint_token.py，位于 adapters/）—— 随技能包发布（.py 后缀，不会被发布平台静默剥离）。
+# 命名与位置对齐已发布技能 ct-base 的 adapters/coze/src/endpoint_token.py / ct-advisor 的 adapters/coze_token_embedded.py。
 #
 # 为什么必须放 .py：
 #   SkillHub / ClawHub 等平台对打包文件有后缀白名单，.dat / .cfg / .key 等非白名单
@@ -44,6 +45,9 @@ def _obf_decode(blob: str) -> str:
 # 统一端点所有 source（who / chinadrugtrials / isrctn / drks / chictr）共用同一份 token。
 # 规范名按"统一端点"语义命名，不再绑定 ictrp.dat 文件方式。
 EMBEDDED_SECRETS = {
+    # bug-report 统一端点公共凭据（§5 公用凭据；并入后 bug_report.py 不再自持 XOR blob）。
+    # 已用本文件统一 OBFUSCATION_KEY 重新编码，消除「两套 XOR key + 两套 blob」(架构评审#3)。
+    "ct_bugreport_coze": "Bg1nGgcgCho7GzN-MAI9QjgKZBwrC1kGa25wVX0Ja1ItIG8eKAowCzglKFQrSjkHOCRkFy8lHUN_V2sJeDN_Uy0wTgg8MCMfLQgSHj8RPkpYBlQlEgUeO1hiUClbAHozFBdXHRMrWzUDEyoYDxpHAxovQCEXL0QBWHRhNV8tWBEBPUY4MSoTIT8WPkUEKR8DGAZrHwswezBGfnwqADcCESYXHDA1PRMlDStJFDMxGEMFKkA5VgVuPwdifSpMKXYoUTpHFVYpAxBBPSpaDBkjNUYqRwAaKFcRAmBTAAYrZihSOG44HwM-Oh09EGcfGzMfGzlAOlQqVE9ZTn4IQT0AWFUufkcPBQBKRxBKZxcaM0oeOWtWEjxqIERJfg8EAWFYEy5pHVYpAxBGPxNKVzYOMkYuRyJXKHk3BGNtJk4tWxYKFx44Dy4DHB0TLhgMGkclAzlrVgoCdSRedQslXj0ANxkXHEtVBVsHGBAVFBUiMBxFLUcMUCtHHQBibTIFKWYsVzppERIoPSoNOxcdSx5BFTAZaCIGVEkYVkNIJQMRfiokQFkgLRAdASIDS2EkLiUBHFJFLFERWjB_W3IbYSlGAyAiGUQEEjs_LhgtTB0sKzIfEAAXAQRfPQRfDixTEno1KC5JCjwoXisOJT5KKxA9HEBTawNRUmoHU2VBFWY3eRMWAhREXT88XjkaTV4gSQ0qP1dqCRoJSiRIHU83VwJTNxE3ZD82Nyg2HQMjeg8TQjApJR0OJCsZREkUDTZxNmIvKidvPy8NG0oQQhFhPxEYFDETRwkDJB8id3l4DgcjURYxAWk6CzAOIAQ3IUQ9LS4ANzpeOFAWQhRFGF0oXlxxVDowdSUrUiQYER4hHCoPPiYRMGMcMgd1E2BHezlwEGolNEcaIi4LHh8mRztaKQEVHzMBTgRTDmEadml8F3s-YlQ2JWYmKCYASk0mSXUPDxonAlJHQiEiYSZ9WF06TTAKFjRHSg==",
     "coze_unified": "Bg1nGgcgCho7GzN-MAI9QjgKZBwrC1kGa25wVX0Jfxk5Hk5HKyM_HjgmM0UoPDUHOCdKGDsPHB5oR1IbeDBnVSwwRkc8VTgKOTYRRigBPkpYBlQlEgUeO1hiUClbAHozFBdXHRMrWzUDEyoYDxpHAxovQCEXL0QBWHRhNV8tWBEBPUE4MQYCQjYgPWBWGkclIDdDCBsrHhJod30tZikAGRM5RxYSBQMbRStKfBwxGEMFKkA5VgVuPwdifSpMKXYoUTpHFVYpAxBBPSpaDBkjNUYqRwAaKFcRAGBtNgYrdjhXOG44HwM-Oh09EGcfGzMfGzlAOlQqVE9ZTn4IQT0AWFUufkcPBQBKRxBKZxcaM0oeOWtWEjxqIERJfg8EAWFYEy5pHVYpAypFPS1KVzcgIkYuaQQYKXkzS2BtJgQtWxYKFx44Dy4DHB0TLhgMGkclAzlrVgoCdSRedQslXj0ANxkXHEtVBVsHGBAVFBUiMBxFLUc2USt5HUZgQzoHKXYoUDt5FVcpLSIMOxcdSzVEEEA8WjUAKF0YAkp2M1M3UwIKHwAdCAk6PhAxPmYsPx8aACp9PiQNSkZoTHc2TR58BS0HFCgCViMEEhhMXUhARitAElkXGgh4FEtlVVNkVn84BC0cFCEoOio6Mw18DykDMiUzFSsNUlwYUHdrCW0AZlQvPGUFXRIRNBU9C2scQEUJOQdbXCAnXiFub35VR1BKAycZfCJdDCM-Bj4qfy0qGTIfCX0ZLSF6E2IVFFEHVQEUEzpUATVUIhYlPE58MRYbQx0pQSoLF3QdYXVRMAI1XhNRDHsKUz0NQDELL3sJKTE3BAlvPRNWawxgRwkvUyBEEBc3HydVXz1DTQdIVxVOK0U7FRo1Ug5XAkBkCzVZVVZWWyRVChM0ExkiPAxaNDIXERoGSSVbV10uQGZWE30gBikXMmMlFlczHgImIX8sQUAXEA19GDc8GU9oRHUJeQhEIlIsWg==",
     # 历史别名，兼容旧调用 get_secret("ictrp" / "who" / ...)
     "ictrp": "Bg1nGgcgCho7GzN-MAI9QjgKZBwrC1kGa25wVX0Jfxk5Hk5HKyM_HjgmM0UoPDUHOCdKGDsPHB5oR1IbeDBnVSwwRkc8VTgKOTYRRigBPkpYBlQlEgUeO1hiUClbAHozFBdXHRMrWzUDEyoYDxpHAxovQCEXL0QBWHRhNV8tWBEBPUE4MQYCQjYgPWBWGkclIDdDCBsrHhJod30tZikAGRM5RxYSBQMbRStKfBwxGEMFKkA5VgVuPwdifSpMKXYoUTpHFVYpAxBBPSpaDBkjNUYqRwAaKFcRAGBtNgYrdjhXOG44HwM-Oh09EGcfGzMfGzlAOlQqVE9ZTn4IQT0AWFUufkcPBQBKRxBKZxcaM0oeOWtWEjxqIERJfg8EAWFYEy5pHVYpAypFPS1KVzcgIkYuaQQYKXkzS2BtJgQtWxYKFx44Dy4DHB0TLhgMGkclAzlrVgoCdSRedQslXj0ANxkXHEtVBVsHGBAVFBUiMBxFLUc2USt5HUZgQzoHKXYoUDt5FVcpLSIMOxcdSzVEEEA8WjUAKF0YAkp2M1M3UwIKHwAdCAk6PhAxPmYsPx8aACp9PiQNSkZoTHc2TR58BS0HFCgCViMEEhhMXUhARitAElkXGgh4FEtlVVNkVn84BC0cFCEoOio6Mw18DykDMiUzFSsNUlwYUHdrCW0AZlQvPGUFXRIRNBU9C2scQEUJOQdbXCAnXiFub35VR1BKAycZfCJdDCM-Bj4qfy0qGTIfCX0ZLSF6E2IVFFEHVQEUEzpUATVUIhYlPE58MRYbQx0pQSoLF3QdYXVRMAI1XhNRDHsKUz0NQDELL3sJKTE3BAlvPRNWawxgRwkvUyBEEBc3HydVXz1DTQdIVxVOK0U7FRo1Ug5XAkBkCzVZVVZWWyRVChM0ExkiPAxaNDIXERoGSSVbV10uQGZWE30gBikXMmMlFlczHgImIX8sQUAXEA19GDc8GU9oRHUJeQhEIlIsWg==",
@@ -51,6 +55,11 @@ EMBEDDED_SECRETS = {
 
 # 规范环境变量名（ct-base §5.236）
 DEFAULT_TOKEN_ENV = "CT_REGISTRY_COZE_TOKEN"
+
+# bug-report 统一端点（§20.3.5 全库共用）；原硬编码于 bug_report.py，现已集中至此（架构评审#3）。
+BUG_REPORT_ENDPOINT = "https://ct-bugreport.coze.site/run"
+# 统一检索端点（Tier-1/Tier-2 共用）；原硬编码于 search_ictrp.py，现已集中至此（架构评审#2/#4 端点单一真源）。
+CT_SEARCH_ENDPOINT = "https://ct-search.coze.site/run"
 # 遗留环境变量别名（兼容旧调用方）
 LEGACY_TOKEN_ENVS = ("ICTRP_WORKFLOW_TOKEN",)
 
@@ -106,5 +115,10 @@ def get_secret(name: str, cli_token: str = None, token_env: str = None, fallback
 def get_token(cli_token: str = None, token_env: str = None) -> str:
     """统一端点（coze）token。等价于 get_secret('coze_unified', ...)。"""
     return get_secret("coze_unified", cli_token, token_env)
+
+
+def get_bugreport_token(cli_token: str = None, token_env: str = None) -> str:
+    """bug-report 统一端点 token。等价于 get_secret('ct_bugreport_coze', ...)。"""
+    return get_secret("ct_bugreport_coze", cli_token, token_env)
 
 

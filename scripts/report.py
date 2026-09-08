@@ -45,6 +45,16 @@ def md(agg):
         L.append(f"- 去重后唯一试验 / unique trials: {ds['deduped_total']}")
         L.append(f"- 移除重复 / removed duplicates: {ds['removed']}")
         L.append(f"- 跨库重复组 / cross-source groups: {ds['cross_source_groups']}")
+        # P1-F: expose the merge-evidence breakdown so an over-merge is visible.
+        # tier2_fuzzy merges on "title + one corroborator" only -> highest
+        # false-positive risk, so it is called out explicitly for review.
+        tb = ds.get("dedup_tier_breakdown")
+        if tb:
+            parts = ", ".join(f"{k}={v}" for k, v in tb.items())
+            L.append(f"- 合并依据分布 / merge-evidence breakdown: {parts}")
+            if tb.get("tier2_fuzzy"):
+                L.append(f"  - ⚠️ 其中 {tb['tier2_fuzzy']} 条为模糊匹配合并"
+                         "（标题+单一佐证），误并风险最高，建议抽查各条 dedup_reason")
     L.append("\n> 数据来源：公开注册库（CT.gov / CDE / ChiCTR / EU CTR / ISRCTN / DRKS / WHO ICTRP）。输出仅供参考，非监管提交文件。")
     # --- Per-record section: homepage links + downloadable documents ---
     recs = agg.get("records") or []

@@ -6,7 +6,7 @@ both GET and POST, and the public search page is JS-rendered (raw HTML has no
 results). It is therefore served by the SAME unified Coze workflow that handles
 WHO ICTRP (source="who") and China CDE (source="chinadrugtrials"), extended with
 source="isrctn". This thin wrapper simply forwards to search_ictrp.py
---source isrctn, sharing the ICTRP Bearer token (embedded in config/keys.py; no .dat file) and the
+--source isrctn, sharing the ICTRP Bearer token (embedded in adapters/endpoint_token.py; no .dat file) and the
 unified endpoint — no separate endpoint or token to provision.
 
 The unified endpoint must be configured (by the workflow author) to serve

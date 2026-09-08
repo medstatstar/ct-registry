@@ -86,7 +86,11 @@ def norm_ctgov(study):
     scm = ps.get("sponsorCollaboratorsModule", {})
     clm = ps.get("contactsLocationsModule", {})
     interventions = [i.get("name") for i in aim.get("interventions", [])]
-    countries = [l.get("country") for l in clm.get("locations", []) if l.get("country")]
+    # De-duplicate country names: CT.gov lists one country per location, so a
+    # multi-site trial would otherwise repeat "United States" once per US site.
+    # Preserve first-seen order via dict.fromkeys (Py3.7+).
+    _raw_countries = [l.get("country") for l in clm.get("locations", []) if l.get("country")]
+    countries = list(dict.fromkeys(_raw_countries))
     return {
         "source": "CTGOV",
         "registry_id": im.get("nctId"),
@@ -543,6 +547,8 @@ def norm_ictrp(t):
         countries = [c.strip() for c in country.split(",") if c.strip()]
     else:
         countries = country if isinstance(country, list) else ([country] if country else [])
+    # De-duplicate (WHO/ICTRP may list the same recruiting country multiple times).
+    countries = list(dict.fromkeys(countries))
 
     return {
         "source": "ICTRP",
@@ -575,7 +581,10 @@ def norm_ictrp(t):
 
 ADAPTERS = {"CTGOV": norm_ctgov, "CDE": norm_cde, "ISRCTN": norm_isrctn,
             "EUCTR": norm_euctr, "CHICTR": norm_chictr, "DRKS": norm_drks,
-            "ICTRP": norm_ictrp}
+            "ICTRP": norm_ictrp,
+            # CTIS（2026-09-07 上移）：EudraCT 继任者，字段与 EUCTR 同构
+            #（ctNumber/title/ctStatus/sponsor/startDateEU + documents）→ 复用 norm_euctr
+            "CTIS": norm_euctr}
 
 
 # --- RMP (Risk Management Plan) field (R14: trial-layer traceability) ------------
@@ -655,14 +664,15 @@ def main():
     ap.add_argument("--chictr")
     ap.add_argument("--isrctn")
     ap.add_argument("--euctr")
+    ap.add_argument("--ctis")
     ap.add_argument("--drks")
     ap.add_argument("--ictrp")
     ap.add_argument("--out", default="normalized.json")
     args = ap.parse_args()
     merged = []
     for key, path in [("ctgov", args.ctgov), ("cde", args.cde), ("chictr", args.chictr),
-                      ("isrctn", args.isrctn), ("euctr", args.euctr), ("drks", args.drks),
-                      ("ictrp", args.ictrp)]:
+                      ("isrctn", args.isrctn), ("euctr", args.euctr), ("ctis", args.ctis),
+                      ("drks", args.drks), ("ictrp", args.ictrp)]:
         if path:
             merged += normalize_file(path)
     with open(args.out, "w", encoding="utf-8") as f:

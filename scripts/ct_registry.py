@@ -89,12 +89,18 @@ for _p in (HERE,):
 
 import kw_localize as kl
 
-# keyword_breadth is also a ct-base shared asset (vendored into this skill).
+# keyword_breadth is a ct-base shared asset (vendored into this skill).
 try:
     from keyword_breadth import (is_broad_keyword, choose_primary_keyword,
-                                 plan_coze_keywords, is_soft_broad)
+                                 plan_coze_keywords)
 except Exception:  # noqa: BLE001  (vendored copy guaranteed in publish package)
     is_broad_keyword = choose_primary_keyword = plan_coze_keywords = None
+
+# is_soft_broad is ct-registry-local (soft-broad disease-category layer);
+# lives in scripts/soft_broad.py, not in the ct-base shared module.
+try:
+    from soft_broad import is_soft_broad
+except Exception:  # noqa: BLE001  (soft-broad layer is ct-registry-local)
     is_soft_broad = None
 
 # Bilingual runtime prompts delegate to ct-base's shared i18n (EN default, ZH on
@@ -345,6 +351,20 @@ def _kw_system_gate(args):
         if m is None:
             all_cached = False
             m = kl.expand_keyword(base, intent)
+            if m and not m.get("en"):
+                # 本地词库 miss → 在线翻译兜底（ct-base references/keyword_expand.md 2026-08-25）
+                _tr = kl.online_translate(base, "en")
+                if _tr:
+                    m["en"] = [_tr]
+                    for _s in ("ctgov", "who"):
+                        _ps = (m.get("per_source") or {}).get(_s)
+                        if _ps:
+                            _ps["keywords"] = [_tr]
+                    m.setdefault("confidence", {}).setdefault("online", []).append(_tr)
+                    m["risks"] = (m.get("risks") or []) + \
+                        [f"英文词来自在线翻译（{_tr!r}），未经人工验证，建议抽查"]
+                    print(f"[ct_registry][KW] 本地词库未命中，在线翻译兜底 → "
+                          f"{base!r} -> {_tr!r}")
         if m:
             manifests.append((axis, base, m))
     if args.kw_adopt:
@@ -358,7 +378,7 @@ def _kw_system_gate(args):
         return
     # 非交互（agent 调用）防呆（2026-08-13）：stdin 非 TTY 时无法渲染菜单，
     # 自动 adopt 已展开词集并继续（交互模式行为不变；显式 --no-expand / --kw-en / --kw-adopt 仍优先）
-    if not sys.stdin.isatty():
+    if args.run or not sys.stdin.isatty():
         print("[ct_registry][KW] 非交互环境：自动采用已展开关键字体系（人工确认请用 --kw-adopt / --no-expand）。")
         for _, _, m in manifests:
             kl.cache_manifest(m, intent)
@@ -530,7 +550,9 @@ def main():
     ap.add_argument("--kw-zh", help="确认门编辑后注入: 逗号分隔的中文关键字集(CDE/ChiCTR 子串)")
     # Direct-connect Tier 1 / external-service Tier 2 opt-in sources
     ap.add_argument("--with-euctr", action="store_true",
-                    help="also retrieve EU Clinical Trials Register (legacy EudraCT), pure HTTP")
+                    help="also retrieve EU Clinical Trials Register (legacy EudraCT, 统一端点)")
+    ap.add_argument("--with-ctis", action="store_true",
+                    help="also retrieve EU CTIS (2022+ 新试验, 公开 REST JSON, 统一端点)")
     ap.add_argument("--with-isrctn", action="store_true",
                     help="also retrieve ISRCTN via external workflow (no clean search API)")
     ap.add_argument("--with-drks", action="store_true",
@@ -538,6 +560,7 @@ def main():
     ap.add_argument("--with-chictr", action="store_true",
                     help="also retrieve ChiCTR (China academic trials) via external workflow")
     ap.add_argument("--euctr-keyword", help="EU-CTR keyword override (else derived, EN)")
+    ap.add_argument("--ctis-keyword", help="CTIS keyword override (else derived, EN)")
     ap.add_argument("--isrctn-keyword", help="ISRCTN keyword override (else derived, EN)")
     ap.add_argument("--drks-keyword", help="DRKS keyword override (else derived, EN)")
     ap.add_argument("--chictr-keyword", help="ChiCTR keyword override (else derived, ZH)")
@@ -892,6 +915,62 @@ def _print_summary(args, agg_path):
                            "message": f"summary 生成失败: {_e}"}, ensure_ascii=False))
 
 
+def _tier1_who_backfill(args, out_dir, norm_inputs, src_label, en_kw):
+    """Tier1 直连源（CT.gov / EU-CTR）站点不通 → 自动 WHO ICTRP 兜底。
+
+    WHO ICTRP 镜像 14+ 注册库，NCT / EUCTR 记录都在其中：源官网连不上时，
+    用同一英文关键词补发一次 WHO 检索，把结果并入归一化（norm_inputs 加
+    ``--ictrp <file>``），由 aggregate 跨源去重，报告里该源试验不丢。
+
+    幂等策略：
+      - 若 norm_inputs 已有 --ictrp（本次 WHO 主路径已成功）→ 镜像已覆盖该源，
+        仅提示、不重复发请求；
+      - 否则补发一条 WHO 检索（自由词 search，同关键词）到
+        ``<out_dir>/ictrp_backfill_<src>.json``，成功并入、失败告警不中断。
+
+    返回 True 表示已产出 WHO 兜底（或本就覆盖），False 表示未覆盖。
+    """
+    if "--ictrp" in norm_inputs:
+        print(f"[ct_registry][WHO-COVER] {src_label} 站点不通；WHO 主路径已成功，"
+              f"其镜像已含 {src_label} 试验（NCT/EUCTR 记录），无需补发。")
+        return True
+    if not en_kw:
+        print(f"[ct_registry][WHO-COVER][WARN] {src_label} 站点不通且无英文关键词，无法 WHO 兜底；"
+              f"请提供疾病/干预英文词后重试，或稍后直接重跑该源。")
+        return False
+    if not _ensure_quota_checked(os.environ.get("CT_DEMAND_ID")):
+        print(f"[ct_registry][WHO-COVER][WARN] {src_label} 站点不通且已达每日共享检索上限，"
+              f"无法补发 WHO 兜底；建议稍后重试或次日再跑。")
+        return False
+    who_out = os.path.join(out_dir, f"ictrp_backfill_{src_label.lower()}.json")
+    max_pages = max(1, (getattr(args, "max", 50) + 9) // 10)
+    cmd = [PY, os.path.join(ADAPTERS_DIR, "search_ictrp.py"), "--run", "--out", who_out,
+           "--timeout", str(getattr(args, "who_timeout", 90)),
+           "--q", en_kw, "--max-pages", str(max_pages)]
+    print(f"[ct_registry][WHO-COVER] {src_label} 官网站点不通 → 自动补发 WHO ICTRP 检索"
+          f"（keyword={en_kw!r}）作为兜底…")
+    try:
+        run(cmd)
+    except subprocess.CalledProcessError as e:
+        print(f"[ct_registry][WHO-COVER][WARN] {src_label} 站点不通且 WHO 兜底也失败 ({e})；"
+              f"维持跳过。")
+        return False
+    try:
+        with open(who_out, encoding="utf-8") as f:
+            od = json.load(f)
+        if not (od.get("records") or od.get("projects")):
+            print(f"[ct_registry][WHO-COVER][WARN] {src_label} 站点不通；WHO 兜底检索返回 0 条，"
+                  f"本次无法覆盖。")
+            return False
+    except Exception:
+        print(f"[ct_registry][WHO-COVER][WARN] {src_label} 站点不通；WHO 兜底结果无法解析。")
+        return False
+    norm_inputs += ["--ictrp", who_out]
+    print(f"[ct_registry][WHO-COVER] ✅ {src_label} 已由 WHO ICTRP 兜底覆盖 "
+          f"({od.get('total', len(od.get('records') or []))} 条) -> {who_out}")
+    return True
+
+
 def _run_tier2_fallback(args, skip_covered, force_all, norm_inputs, extra_tasks=None):
     """Retrieve the WHO-covered national registries independently (parallel).
 
@@ -908,7 +987,10 @@ def _run_tier2_fallback(args, skip_covered, force_all, norm_inputs, extra_tasks=
     """
     _specs = [
         # (SRC, src_lower, kw_lang, is_endpoint, api_source)
-        ("EUCTR", "euctr", "en", False, None),
+        # 2026-09-07：EU-CTR 上移统一端点（euctr_search_node），加 CTIS（2022+ 新欧盟试验）。
+        # 二者 keyword 为英文；is_endpoint=True → search_ictrp.py --source euctr/ctis。
+        ("EUCTR", "euctr", "en", True, "euctr"),
+        ("CTIS", "ctis", "en", True, "ctis"),
         ("ISRCTN", "isrctn", "en", True, "isrctn"),
         ("DRKS", "drks", "en", True, "drks"),
         ("CHICTR", "chictr", "zh", True, "chictr"),
@@ -969,6 +1051,11 @@ def _run_tier2_fallback(args, skip_covered, force_all, norm_inputs, extra_tasks=
                   f"（若其他源有数据仍可出报告）。")
         else:
             print(f"[ct_registry][WARN] {_SRC} retrieval failed (exit {_rc}); skipping.")
+            # EU-CTR 是 Tier1 本地直连（不经统一端点），官网不通时编排层兜底 WHO
+            # （ISRCTN/DRKS/ChiCTR 走统一端点，其 adapter 内已有 WHO fallback，无需此处重复）。
+            if _SRC == "EUCTR":
+                _en = getattr(args, "euctr_keyword", None) or _derive_kw(args, "en")
+                _tier1_who_backfill(args, args.out_dir, norm_inputs, "EU-CTR", _en)
     return [_t["name"] for _t in tasks]
 
 
@@ -1068,17 +1155,18 @@ def _swap_norm_input(norm_inputs, flag, new_path):
 
 def _run_coze_autodetail(args, norm_inputs, run):
     """--with-detail: symmetric auto-detail for ALL Coze-endpoint sources already
-    present in norm_inputs (WHO ICTRP / ISRCTN / DRKS / ChiCTR), not just CDE.
+    present in norm_inputs (WHO ICTRP / ISRCTN / DRKS / ChiCTR / CTIS), not just CDE.
 
     The set is derived from norm_inputs itself (--ictrp / --isrctn / --drks /
-    --chictr), so skipped / failed / fallback decisions made upstream (skip_covered,
-    force_all, timeout) are respected automatically. Same demand_id -> DEMAND-BASED
-    DEDUP charges the detail calls together with the list as 1 quota.
+    --chictr / --ctis), so skipped / failed / fallback decisions made upstream
+    (skip_covered, force_all, timeout) are respected automatically. Same demand_id
+    -> DEMAND-BASED DEDUP charges the detail calls together with the list as 1 quota.
     """
     flags = [("--ictrp", "who", "WHO ICTRP"),
              ("--isrctn", "isrctn", "ISRCTN"),
              ("--drks", "drks", "DRKS"),
-             ("--chictr", "chictr", "ChiCTR")]
+             ("--chictr", "chictr", "ChiCTR"),
+             ("--ctis", "ctis", "CTIS")]
     for flag, api_source, label in flags:
         path = None
         for i, v in enumerate(norm_inputs):
@@ -1341,22 +1429,30 @@ def _ensure_quota_checked(demand_id):
 def _who_cmd(args, out, who_date_start, who_date_end, who_phase):
     """Build the WHO ICTRP search command, or None if no keyword can be derived.
 
-    Default = free-text search (--q). When --who-mode combined is set, or any
-    --who-* field is supplied, builds the ADVANCED (combined) command: the
-    composite keyword is split into structured who_* fields (drug -> who_intervention,
-    disease -> who_condition, sponsor -> who_sponsor) so the endpoint does a
-    server-side AND filter (smaller payload, usually faster) instead of pulling a
-    huge free-text result set that then times out. This is code-driven; the user
-    does not operate the fields manually.
+    Default = free-text search (--q) using the (intervention, condition) keywords.
+    Combined (advanced) mode is ONLY used when the user explicitly passes
+    --who-mode combined AND supplies at least one REAL filter
+    (who_country / who_phase / who_date_* / who_sponsor / who_secondary_id /
+    who_recruitment_status). This is mandatory: the unified endpoint's WHO combined
+    mode rejects requests that carry only who_condition / who_intervention / who_title
+    (2026-09-06 root cause — such queries returned 0 with an embedded validation
+    error). A disease + drug query therefore goes through free-text search, which
+    returns the full result set (578~706 for osimertinib NSCLC). The adapter
+    (search_ictrp._build_who_payload) enforces the same contract as a second guard.
     """
     ictrp_kw = args.ictrp_keyword or _derive_kw(args, "en")
     if not ictrp_kw:
         return None
-    # 高级检索触发条件：显式 --who-mode combined，或给了任一 --who-* 字段，或有 --sponsor
-    has_sponsor = bool(getattr(args, "sponsor", None)) or bool(getattr(args, "who_sponsor", None))
-    use_advanced = (getattr(args, "who_mode", None) == "combined") or any(
-        getattr(args, a, None) for a in ("who_condition", "who_intervention",
-                                         "who_sponsor", "who_country")) or has_sponsor
+    # WHO combined 模式合同（2026-09-06 实测根因）：
+    #   统一端点 WHO combined 仅认 who_country/who_phase/who_date_*/who_sponsor/
+    #   who_secondary_id/who_recruitment_status 为"真筛选"；who_condition/who_intervention
+    #   不算，仅传它们会触发后端校验错误 → 0 条。故：仅当用户显式 --who-mode combined
+    #   且提供了任一"真筛选"时，才走 combined；disease+drug（仅 condition/intervention）
+    #   一律走自由词 search 模式（实测 578~706 条，覆盖更全）。适配器层另有同级守卫。
+    REAL_FILTERS = {"who_country", "who_phase", "who_date_start", "who_date_end",
+                    "who_sponsor", "who_secondary_id", "who_recruitment_status"}
+    real_filter_present = any(getattr(args, a, None) for a in REAL_FILTERS)
+    use_advanced = (getattr(args, "who_mode", None) == "combined") and real_filter_present
     cmd = [PY, os.path.join(ADAPTERS_DIR, "search_ictrp.py"), "--run", "--out", out]
     # WHO 等待超时（--who-timeout）：默认 90s 快速失败，可传 300 恢复完整 5 分钟版
     cmd += ["--timeout", str(getattr(args, "who_timeout", 90))]
@@ -1375,8 +1471,13 @@ def _who_cmd(args, out, who_date_start, who_date_end, who_phase):
         if getattr(args, "who_country", None):
             cmd += ["--who-country", args.who_country]
     else:
+        # 自由词 search：把 (intervention, condition) 直连为关键词，覆盖 disease+drug 主路径
+        intr = getattr(args, "who_intervention", None) or getattr(args, "drug", None) \
+            or getattr(args, "intr", None)
+        cond = getattr(args, "who_condition", None) or getattr(args, "cond", None)
+        search_kw = " ".join(t for t in (intr, cond) if t) or ictrp_kw
         max_pages = max(1, (args.max + 9) // 10)
-        cmd += ["--q", ictrp_kw, "--max-pages", str(max_pages)]
+        cmd += ["--q", search_kw, "--max-pages", str(max_pages)]
     if who_date_start:
         cmd += ["--who-date-start", who_date_start]
     if who_date_end:
@@ -1411,6 +1512,11 @@ def _interpret_who(res, out):
     if data.get("error_msg"):
         _RUN_STATUS["who_status"] = "failed"
         return False, f"error_msg: {data.get('error_msg')}"
+    if data.get("empty_no_error"):
+        # 0 条 + 200 + 无错误：疑似后端节点故障（非真实零结果，如 ChiCTR 反复空返回）。
+        # 判失败以便报告披露降级，而非静默当作"该源无结果"。
+        _RUN_STATUS["who_status"] = "failed"
+        return False, "backend returned 0 records with no error (suspected node issue, not genuine zero)"
     return True, None
 
 
@@ -1766,6 +1872,13 @@ def _run_ctgov(args, cond_v, intr_v, intr, cond_st, intr_st, out_dir, norm_input
     When --ctgov-api-key is given, uses search_ctgov.py --fast (Session pool +
     large pageSize + concurrent pagination). Otherwise uses the default urllib
     path (backward-compatible).
+
+    WHO-COVER fallback (2026-09-07): CT.gov is Tier-1 direct (local network →
+    clinicaltrials.gov). If the site is unreachable (URLError / HTTP error → the
+    adapter exits non-zero), do NOT abort the whole pipeline: catch it and fall
+    back to a WHO ICTRP search (its mirror carries NCT records) via
+    ``_tier1_who_backfill``. When WHO already succeeded (--ictrp in norm_inputs)
+    the mirror already covers NCT trials, so nothing else is needed.
     """
     if args.cond and cond_st == "term_map":
         print(f"[ct_registry][i18n] CT.gov (en): {args.cond!r} -> {cond_v!r}")
@@ -1784,7 +1897,12 @@ def _run_ctgov(args, cond_v, intr_v, intr, cond_st, intr_st, out_dir, norm_input
         *(["--status", args.status] if args.status else []),
         "--max", str(args.max), "--out", ctgov,
     ]
-    run(cmd)
+    try:
+        run(cmd)
+    except subprocess.CalledProcessError as e:
+        print(f"[ct_registry][WARN] CT.gov 站点检索失败 ({e}); 尝试 WHO ICTRP 兜底…")
+        _tier1_who_backfill(args, out_dir, norm_inputs, "CT.gov", cond_v or intr_v or args.sponsor)
+        return
     norm_inputs += ["--ctgov", ctgov]
 
 

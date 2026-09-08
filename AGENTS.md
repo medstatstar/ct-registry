@@ -96,7 +96,7 @@ confirmation follows `references/search_menu.md` (ct-base §6.1).
   - **④ need_params 缺失须向用户确认（§5.48）**：Coze 返回 `need_params`（定界包裹内 `<<<CT_NEED_PARAMS>>>` 块）→ 向用户逐项询问缺失参数（**绝不**编造），重建卡片 JSON（保留 `draft_answer` / `need_tool`、填 `params`、保留 `original_question`）后重跑。
   - **⑤ 代理残留自动重试（§5.49）**：`requests` 抛 `ProxyError` / `ConnectionError`（Windows 系统代理残留 → WinError 10061）时，调用方已内置自动绕过系统代理（`proxies={"http":None,"https":None}`）直连重试一次；直连仍不可达则照常向上抛 fallback。代理无需手动干预。
   - **⑥ 出站 payload 发送前脱敏（§5.50）**：调用方已对发往 Coze 的 payload 经 `_sanitize_payload()` 剥离 PII（身份证 / 手机号 / 邮箱）后再发送；脚本绝不回显 token / payload / draft 明文（预览模式仅打印结构化请求，不含凭据）。
-  - 完整红线与文案模板见 `ct-base` `docs/02-governance-redlines.md` §5。
+  - 完整红线与文案模板见 `ct-base` `docs/02-security-model.md` §5。
 
 ## Menu / Navigation Design (ct-base §6)
 

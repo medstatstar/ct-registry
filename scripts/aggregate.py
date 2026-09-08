@@ -16,10 +16,15 @@ ISRCTN / DRKS / ICTRP 各自拉回原始记录，聚合层做跨源去重，否�
   3. 主源选择：同组优先以 CT.gov 为 primary_source（字段最完整、更新最频繁），否则取字段最全者。
 
 架构落点：归一化层保留各库原始记录；聚合层追加 dedup_group_id / primary_source /
-registry_id_norm / secondary_ids 四个字段，并产出 dedup_summary。
+registry_id_norm / secondary_ids / dedup_reason / dedup_tier 六个字段，并产出 dedup_summary。
 
 P1-C: FDA 多模态数据整合（drug_approvals/shortages/recalls）
 P1-E: MinHash 预聚类替代 O(n²) 模糊匹配，降为近似 O(n log n)
+P1-F: 去重可审计化。每条记录输出 dedup_reason（合并证据）+ dedup_tier
+      （tier1_id_bridge / tier2_fuzzy / transitive / none），dedup_summary 增加
+      merge_edges 与 dedup_tier_breakdown。动机：非英文试验（CDE/ChiCTR）靠自由文本
+      注册号桥接，误并（false positive）与正确合并在只有 group_id 时无法区分；
+      tier2_fuzzy 仅凭"标题+单一佐证"即合并，风险最高，必须留证据可回溯。
 """
 import argparse
 import hashlib
@@ -283,6 +288,14 @@ def dedup(records):
     n = len(records)
     parent = list(range(n))
 
+    # P1-F: per-merge audit trail. Every union() that actually collapses two
+    # clusters records WHY, so each output record can carry a human-readable
+    # dedup_reason instead of an opaque group id. Motivation: non-English
+    # trials (CDE/ChiCTR) bridge through free-text registry numbers, and a
+    # silent over-merge (false positive) is indistinguishable from a correct
+    # merge without the evidence that triggered it.
+    merge_edges = []  # (i, j, tier, evidence)
+
     def find(x):
         while parent[x] != x:
             parent[x] = parent[parent[x]]
@@ -299,7 +312,11 @@ def dedup(records):
     for i, rec in enumerate(records):
         for rid in _record_ids(rec):
             if rid in id_to_idx:
-                union(i, id_to_idx[rid])
+                other = id_to_idx[rid]
+                if other != i and find(i) != find(other):
+                    merge_edges.append((i, other, "tier1_id_bridge",
+                                        f"shared registry id {rid}"))
+                union(i, other)
             else:
                 id_to_idx[rid] = i
 
@@ -334,6 +351,15 @@ def dedup(records):
         iv_ok = (iv_i and iv_i == iv_j)
         # title must match; sponsor/year/intervention at least one corroborates
         if sponsor_ok or year_ok or iv_ok:
+            corroborators = []
+            if sponsor_ok:
+                corroborators.append("sponsor")
+            if year_ok:
+                corroborators.append(f"start_year={yr_i}")
+            if iv_ok:
+                corroborators.append("intervention")
+            merge_edges.append((i, j, "tier2_fuzzy",
+                                "title match + " + "/".join(corroborators)))
             union(i, j)
 
     # --- assign group ids + collect members ---
@@ -341,6 +367,17 @@ def dedup(records):
     for i in range(n):
         g = find(i)
         groups.setdefault(g, []).append(i)
+
+    # --- P1-F: per-record merge evidence, keyed by record index ---
+    def _label(idx):
+        src = records[idx].get("source") or "?"
+        rid = norm_id(records[idx].get("registry_id")) or "no-id"
+        return f"{src}:{rid}"
+
+    edge_evidence = defaultdict(list)
+    for a, b, tier, ev in merge_edges:
+        edge_evidence[a].append((tier, ev, b))
+        edge_evidence[b].append((tier, ev, a))
 
     # --- Tier 3: choose primary_source per group (CT.gov preferred) ---
     tagged = [dict(r) for r in records]
@@ -363,9 +400,32 @@ def dedup(records):
             own = tagged[i].get("registry_id_norm")
             tagged[i]["secondary_ids"] = sorted(grp_ids - ({own} if own else set()))
 
+            # P1-F: explain this record's membership. Direct evidence wins;
+            # union-find is a transitive closure, so a record can legitimately
+            # land in a cluster without a direct edge (A-B, B-C => A,C linked).
+            ev = edge_evidence.get(i) or []
+            if ev:
+                tiers = sorted({t for t, _, _ in ev})
+                parts = [f"{t} ({e}) <-> {_label(o)}" for t, e, o in ev[:3]]
+                if len(ev) > 3:
+                    parts.append(f"+{len(ev) - 3} more")
+                tagged[i]["dedup_reason"] = "; ".join(parts)
+                tagged[i]["dedup_tier"] = "+".join(tiers)
+            elif len(members) > 1:
+                peers = ", ".join(_label(j) for j in members if j != i)
+                if len(peers) > 160:
+                    peers = peers[:157] + "..."
+                tagged[i]["dedup_reason"] = f"transitive: joined cluster via {peers}"
+                tagged[i]["dedup_tier"] = "transitive"
+            else:
+                tagged[i]["dedup_reason"] = "singleton: no cross-registry match"
+                tagged[i]["dedup_tier"] = "none"
+
     # --- summary ---
     cross_source = sum(1 for m in groups.values()
                        if len({tagged[i].get("source") for i in m}) > 1)
+    # P1-F: tier breakdown makes over-merge / under-merge auditable at a glance.
+    tier_breakdown = Counter(r.get("dedup_tier") or "none" for r in tagged)
     summary = {
         "raw_total": n,
         "groups": len(groups),
@@ -374,6 +434,8 @@ def dedup(records):
         "cross_source_groups": cross_source,
         "minhash_candidates": len(candidates),
         "minhash_bands": 8,
+        "merge_edges": len(merge_edges),
+        "dedup_tier_breakdown": dict(sorted(tier_breakdown.items())),
     }
     return tagged, summary
 

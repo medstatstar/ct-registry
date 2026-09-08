@@ -21,9 +21,17 @@ CDE/
 # ── 本地归档：离群/废弃模板与脚本（与发布技能无关，不随包发布）──
 _archived_orphans/
 
-# ── 本地归档：WHO/CDE 统一 Coze 工作流源码备份 + 技术文档（本地开发备查，不随包发布）──
-#    源自 project_20260809_163051.tar.gz（2026-08-09 导出）。同时覆盖 ct-base 约定的
-#    coze 接口文档（refiner_contract 等，BASE.md §16.7 强制排除，三平台均不打包）。
+# ── Coze 服务端工作流源码镜像（活目录·非归档·刻意隔离）──
+#    adapters/coze/ICTRP_CDE/projects 是统一端点 ct-search.coze.site/run 的部署源码，
+#    由本技能维护；coze/ 为历史工作流导出件与本地技术文档。
+#    发布策略（刻意，勿改）：**整个目录不随技能包发布，三平台均排除**——
+#      · ClawHub：本文件（ClawHub 只认 .clawhubignore，不读 .gitignore）
+#      · GitHub：见 .gitignore 同名条目
+#      · SkillHub：发布走 git archive 纯净副本，天然排除
+#    更新路径只有一条：本地改完 → 打干净 zip + MD5 → 由作者手动上传 Coze 控制台生效
+#    （无本地部署 CLI，push/publish 都不会把改动推到端点）。
+#    原始导出：project_20260809_163051.tar.gz（2026-08-09）。
+#    同时覆盖 ct-base 约定的 coze 接口文档（refiner_contract 等，BASE.md §16.7 强制排除）。
 coze/
 adapters/coze/
 
@@ -48,3 +56,46 @@ coze/refiner_contract.md
 coze/coze_system_prompt_v*.md
 coze/subagent_prompt.md
 references/ops.md
+
+# ── 发布前自检编排器（dev-only，引用 ct-base 兄弟技能，不随包发布）──
+scripts/publish_preflight.py
+
+# ── publish_inject 注入标记，不进发布包 ──
+.ctbase_injected.json
+
+# ── ct-base 统一基线（ClawHub 不读 .gitignore，须自列全量）──
+config.local.json
+*.pyo
+outputs/
+*.cache
+adapters/coze_project/
+**/coze_contract.md
+**/refiner_contract.md
+**/coze_system_prompt_v*.md
+**/ops.md
+
+# ── 补齐双份 ignore 差异项（2026-08-29）──
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+*.so
+*.egg-info/
+
+# ── publish_inject 注入前的自动备份（2026-08-31 补）──
+#    注入会为每个被覆盖文件生成 <name>.ctbase_bak_<ts>；若不排除，注入后
+#    git add -A 会把这些备份打进发布包。发布仍须按 §16.8 走 git archive
+#    重建纯净副本，此处仅作防御。
+*.ctbase_bak_*
+
+# ── workbench 运行产物（server.py 检索结果落盘，不随包发布；P2 补齐双份）──
+workbench/runs/
+workbench/__pycache__/
+
+# ── 通用构建/编辑产物（P2 · 2026-09-06 补齐，避免误打包/误提交）──
+*.bak
+*.zip
+*.tar.gz
+.idea/
+.vscode/
+_user_meta.json

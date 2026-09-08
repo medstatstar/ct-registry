@@ -46,7 +46,12 @@
     "新辅助": "neoadjuvant",
     "辅助": "adjuvant",
     "一线": "first-line",
-    "二线": "second-line"
+    "二线": "second-line",
+    "佐妥昔单抗": "Zolbetuximab",
+    "恶心呕吐": "nausea/vomiting",
+    "恶心": "nausea",
+    "呕吐": "vomiting",
+    "止吐": "antiemetic"
   },
   "class_en2zh": {
     "sartan": "沙坦",

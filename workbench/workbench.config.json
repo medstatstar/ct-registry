@@ -1,0 +1,15 @@
+{
+  "skill": "ct-registry",
+  "version": "0.1.1",
+  "title": { "zh": "ct-registry 检索工作台", "en": "ct-registry Search Workbench" },
+  "theme": { "brand": "clinical-indigo", "mode": "light" },
+  "backend": { "mode": "api", "port": 8790, "mockEnv": "CT_REGISTRY_MOCK" },
+  "modules": [
+    { "id": "search-form", "mount": "wb-input", "title": { "zh": "检索表单", "en": "Search form" } },
+    { "id": "result", "mount": "wb-result", "title": { "zh": "检索结果", "en": "Result" } },
+    { "id": "tracking", "mount": "wb-thread", "title": { "zh": "数据源与追踪", "en": "Sources & tracking" } },
+    { "id": "run-history", "mount": "wb-history", "title": { "zh": "运行记录", "en": "Run history" } }
+  ],
+  "i18n": { "defaultLang": "zh", "dictionaries": "inline" },
+  "bugReport": { "enabled": true }
+}

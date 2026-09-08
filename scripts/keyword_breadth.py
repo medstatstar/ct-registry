@@ -57,40 +57,6 @@ BROAD_TERMS_ZH = {
     "通用", "试验", "研究",
 }
 
-# ---------------------------------------------------------------------------
-# Tier-2 宽病类（软警告层，不硬退）：单独检索可能过宽、但属合法需求
-# （用户可能就是要某疾病领域的宽概览）。仅整词匹配——绝不碰子串/词根，
-# 以免误伤组合检索：如 "diabetes metformin" 归一化为 "diabetesmetformin"
-# 整词，不在表内，自然放行。
-# ---------------------------------------------------------------------------
-BROAD_TERMS_SOFT_EN = {
-    "diabetes", "diabetic", "hypertension", "asthma", "stroke", "obesity", "obese",
-    "depression", "depressive", "alzheimer", "dementia", "parkinson", "epilepsy",
-    "arthritis", "osteoporosis", "copd", "hiv", "aids", "hepatitis", "cirrhosis",
-    "renal", "cardiac", "heart",
-}
-BROAD_TERMS_SOFT_ZH = {
-    "糖尿病", "高血压", "哮喘", "卒中", "中风", "肥胖", "抑郁", "抑郁症",
-    "阿尔茨海默", "痴呆", "帕金森", "癫痫", "关节炎", "骨质疏松", "慢阻肺",
-    "艾滋", "艾滋病", "肝炎", "肝硬化", "肾病", "心脏病", "心衰",
-}
-
-def is_soft_broad(kw):
-    """Tier-2 宽病类判定：单独检索可能过宽但属合法需求（用户可能要宽领域概览）。
-
-    仅整词匹配（不碰子串/词根），避免误伤组合检索。返回 True 表示「软宽词」。
-    注意：不进 is_broad_keyword（硬退词典），所以软词不会触发 sys.exit(2)，
-    也不影响 choose_primary_keyword 的重排——组合检索照常放行。
-    """
-    if not kw:
-        return False
-    if looks_like_drug(kw):
-        return False
-    n = _norm(kw)
-    if not n:
-        return False
-    return n in BROAD_TERMS_SOFT_EN or n in BROAD_TERMS_SOFT_ZH
-
 # 具体药物特征（命中即视为「具体词」，覆盖宽泛判定）
 _DRUG_EN = re.compile(
     r"\d|"                                  # 含数字（如 AZD9291）
@@ -208,9 +174,7 @@ def plan_coze_keywords(words):
             "ordered": [kw], "primary": kw, "broad": broad,
             "action": "abort" if broad else "proceed",
             "message": (f"单关键词 {kw!r} 过于宽泛, 结果可能超过千页; "
-                        f"请缩小关键词范围后再检索，"
-                        f"或改用高级检索模式（WHO: --who-mode combined --who-condition/--who-intervention；"
-                        f"CDE: --cde-mode combined --indication/--drugs-name 等字段组合）。") if broad
+                        f"请缩小关键词范围后再检索。") if broad
                        else f"单关键词 {kw!r} 具体度足够。",
         }
 
@@ -222,9 +186,7 @@ def plan_coze_keywords(words):
             "ordered": ordered, "primary": primary, "broad": True,
             "action": "abort",
             "message": (f"组合关键词 {words} 重排后主词仍为宽泛词 {primary!r}; "
-                        f"请提供更具体的组合词（如具体疾病/药物/分期），"
-                        f"或改用高级检索模式（WHO: --who-mode combined --who-condition/--who-intervention；"
-                        f"CDE: --cde-mode combined --indication/--drugs-name 等字段组合）。"),
+                        f"请提供更具体的组合词（如具体疾病/药物/分期）。"),
         }
     changed = ordered != list(words)
     return {
@@ -245,12 +207,6 @@ if __name__ == "__main__":
     for kw, exp in tests:
         got = is_broad_keyword(kw)
         print(f"{'OK ' if got == exp else 'XX '} is_broad({kw!r}) = {got} (exp {exp})")
-    print("--- is_soft_broad ---")
-    soft_tests = [("diabetes", True), ("糖尿病", True), ("cancer", False),
-                  ("diabetes metformin", False), ("肺癌", False), ("osimertinib", False)]
-    for kw, exp in soft_tests:
-        got = is_soft_broad(kw)
-        print(f"{'OK ' if got == exp else 'XX '} is_soft_broad({kw!r}) = {got} (exp {exp})")
     print("reorder:", choose_primary_keyword(["cancer", "osimertinib", "lung"]))
     print("plan single broad:", plan_coze_keywords(["cancer"])["action"])
     print("plan multi:", plan_coze_keywords(["cancer", "osimertinib"])["action"],

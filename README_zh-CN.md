@@ -20,25 +20,25 @@
 
 直接用自然语言描述你的需求即可。助手会自动判断要查哪些注册库、各源用什么关键词（中英文自动互译）、用哪种检索模式——你无需自己选参数。以下为由简到繁的真实示例。
 
-### 示例 1 · 快速注册库检索
+### 示例 1 · 单源限定检索
 **你说：**
-> 查一下辉瑞 2022 年以来注册的三期肿瘤试验。
+> 查一下辉瑞 2022 年以来注册的三期肿瘤试验，只要 CT.gov 的。
 
 **助手回复（概要）：**
-> 直连 ClinicalTrials.gov v2，归一化分期 / 状态 / 申办方，返回排序表（数量、范围、样例行），每条试验附可点击首页链接。
+> 识别为单源限定，直连 ClinicalTrials.gov v2，归一化分期 / 状态 / 申办方，返回排序表（数量、范围、样例行），每条试验附可点击首页链接。
 
 **如何触发真实计算：**
-> 安全预览只打印计划；说"请直接计算" / "run it" 才执行真实检索。
+> 安全预览打印「单源：CT.gov」；说"请直接计算"执行。单源限定不走 WHO 全球镜像，速度更快、结果更聚焦。
 
-### 示例 2 · 跨源（CT.gov + 中国 CDE）
+### 示例 2 · 默认全球检索（WHO ICTRP 14+ 注册库 + 中国 CDE）
 **你说：**
-> 找奥希替尼（osimertinib）在非小细胞肺癌的试验，全球和中国都要。
+> 找奥希替尼（osimertinib）在非小细胞肺癌的试验。
 
 **助手回复（概要）：**
-> 提议范围为 ClinicalTrials.gov v2 + 中国 CDE，关键词自动翻译为英文用于 CT.gov、中文（奥希替尼）用于 CDE，两源并发后合并为同一张格局图（如 CT.gov 20 + CDE 2057 → 2077 条），给出分期 / 状态 / 申办方分布。
+> 默认走 WHO ICTRP（一次调用镜像 CT.gov、EU-CTR、ISRCTN、DRKS、ChiCTR、jRCT、ANZCTR、CTRI 等 14+ 个一级注册库），外加中国 CDE 独立检索（补全中文注册试验），合并为一张全球格局图（如 WHO 镜像 706 + CDE 2057 → 2763 条），给出分期 / 状态 / 申办方分布。
 
 **如何触发真实计算：**
-> 安全预览打印关键词映射 + 范围；说"请直接计算"执行。CDE 走统一 Coze 端点（需 token）；CT.gov 免费直连。
+> 安全预览打印检索范围（默认全球 + CDE）；说"请直接计算"执行。默认全球检索无需额外指定范围；若只想查单源（如仅 CT.gov），可在对话里明确限定。
 
 ### 示例 3 · 复杂 —— 多参数 CDE 路由菜单
 **你说：**
@@ -112,6 +112,36 @@
 | 结构化输出：JSON / Markdown / PNG / Excel | — | "把格局导出成 Excel 工作簿" |
 | 链式下游分析 | → `ct-pipeline` / `ct-protocol` | "把归一化结果喂给 ct-pipeline 做情报" |
 
+## 数据源与状态
+
+> 多源检索，每个源的情况都在这里讲清。合并检索源（WHO ICTRP）会镜像 14+ 个一级注册库；**凡 WHO 覆盖的源，原站点不通时自动改用 WHO 线路兜底**（见「兜底策略」），不会静默 0 条；**确实站点异常时也一定会返回明确提示**，绝不会把「源不可用」伪装成「无结果」。
+
+| 源 | 访问方式 | 角色 / 覆盖 | 当前状态 | 兜底策略 |
+|---|---|---|---|---|
+| ClinicalTrials.gov v2 | 直连（官方 REST API，无需 token） | 美国 + 全球主库；权威字段最全 | ✅ 正常 | — |
+| PubChem (PUG-REST) | 直连（无需 token） | 药物 → CID / 属性 / 靶点映射 | ✅ 正常 | — |
+| EU-CTR / EudraCT 旧库 | 直连（纯 HTTP 解析，无浏览器） | 欧盟 2022 前存量试验 | ✅ 正常（单页 ~13s，默认收敛 3 页） | 站点不通 → WHO 线路筛 EUCTR 记录 |
+| CTIS（欧盟 2022+ 新试验） | 统一 Coze 端点 `source=ctis` | 欧盟新试验；**非 WHO 一级镜像，无 WHO 兜底** | ✅ 正常（单页 ~9s，默认收敛 2 页） | 站点不通 → 无 WHO 兜底，返回明确提示 |
+| 中国 CDE (`chinadrugtrials`) | 统一 Coze 端点 | 中国药物试验（始终独立检索，WHO 英文匹配会漏中文试验） | ✅ 正常 | — |
+| WHO ICTRP (`who`) | 统一 Coze 端点 | **合并检索源**：一次调用镜像 14+ 一级注册库 | ✅ 正常（量大，受 5 分钟网关约束） | —（本身就是兜底源） |
+| ChiCTR (`chictr`) | 统一 Coze 端点 | 中国学术试验（无公开 API） | ⚠️ 自 2026-09-06 起后端节点持续返回空（疑似故障） | 0 条 + 对照探针判定故障 → 自动切 WHO 线路筛 ChiCTR 记录 |
+| ISRCTN (`isrctn`) | 统一 Coze 端点（**官方 XML API**，绕过反爬验证挑战） | 英国注册库 | ✅ 正常（2026-09-08 由网页爬取改为官方 XML API，修复 0 条误判） | 站点异常/改版 → 自动切 WHO 线路筛 ISRCTN 记录 |
+| DRKS (`drks`) | 统一 Coze 端点 | 德国注册库 | ⚠️ 旧搜索入口已迁移至 BfArM（JSF 新站，旧形态不可解析） | 迁移预检短路 + 自动切 WHO 线路筛 DRKS 记录 |
+
+### 各来源如何配合
+
+- **CDE 始终独立检索**：WHO ICTRP 英文标题匹配会漏掉中文登记试验，故 China 覆盖以 CDE 为准，不依赖 WHO 镜像。
+- **WHO ICTRP 是合并兜底源**：它镜像了 ChiCTR / ISRCTN / DRKS / EUCTR 等。当某个 WHO 覆盖的源（ChiCTR / ISRCTN / DRKS / EUCTR）**原站点不通**（迁移、WAF 拦截、节点故障、显式报错）时，编排层会**自动改用 WHO 线路、并按注册号正则筛出该源的记录**回填——你仍拿到该源数据，只是来源标注为 `fallback_used=who_ictrp`。
+- **CTIS 不在 WHO 一级镜像内**（欧盟新试验未进 ICTRP），故 CTIS 无 WHO 兜底；它若异常会直接返回明确提示。
+
+### 站点异常会返回什么
+
+- **DRKS 迁移**：预检命中（旧入口 307 → BfArM）即快速返回「站点已迁移」提示并切 WHO 兜底，不再空转数十秒。
+- **ChiCTR 节点故障**：0 条 + 对照词探针也空 → 判定源不可用，返回明确提示「源不可用而非真实零结果」，并自动切 WHO 兜底。
+- **ISRCTN 改版/拦截**：原网页爬取会被反爬验证挑战挡住 → 现改官方 XML API 绕过；若 API 亦异常，返回明确提示并切 WHO 兜底。
+- **真实零结果 vs 源故障的区分**：对「0 条 + 无错误」的歧义，编排层用各源必有海量登记的**对照词探针**判定——对照词有数据说明是真实零结果（不浪费 WHO 配额）；对照词也空才是源故障（触发兜底）。
+- 任何兜底失败（WHO 也无该源记录 / WHO 自身报错）都会**保留明确 error_msg**（如「DRKS 站点已迁移…[WHO 回退亦失败: …]」），绝不伪装成「无结果」。
+
 ## 常见问题（FAQ）
 
 **只给部分参数能查吗？**
@@ -138,23 +168,32 @@
 **抓取合规吗？会踩限流吗？**
 全部走官方公开 API / 公开检索接口（CT.gov v2、EU-CTR、PubChem、WHO ICTRP、中国 CDE 统一端点），不爬取任何未公开页面，也不绕过站点防护。后台对第三方端点采取**串行调用 + 指数退避**，遵守其速率限制；遇到 429 / 超时按退避重试，绝不暴力并发。全球镜像（14+ 注册库）受统一端点 5 分钟网关硬墙约束，属合规等待而非限速惩罚。
 
+**Q: 发现结果有误怎么办？怎么上报？**
+A: 本技能遵循 ct-base §20.3 错误报告流程。若您怀疑结果有误（或引擎报错），直接说 **"上报问题" / "report a bug" / "提交错误报告"**。技能在检测到疑似缺陷时（如引擎报错、重试仍失败）也会**主动询问**是否上报——**每会话最多 1 次**，您可随时拒绝。无论哪种方式，助手都会：
+1. **生成一份脱敏报告**（11 键白名单：skill / skill_version / test / error_type / error_code / engine_status / description / locale / query_origin / session_hash / attempts——**不含您的原始输入值或个人数据**，仅 `description` 字段由您把关披露，如所用算法/函数、错误消息原文）；
+2. **展示报告全文供您检视**——可补充问题描述或更正任何内容后再确认；
+3. **经您明确确认后发送**——本会话有 coze 调用则发往统一端点 `https://ct-bugreport.coze.site/run`；纯本地则保存脱敏报告 + 提示邮件联系作者（数据不出域）；
+4. **收到回执**——包括您此前从同一来源提交的报告是否已被修复（含修复说明）或仍在处理中。
+
+整个过程您完全可控：报告在**发送前**先展示给您，未经您明确说「发送」绝不传输任何内容。
+
 ## 开始检索前：耗时与数据量提示
 
-借 WHO ICTRP 做全球检索（一次调用镜像 14+ 注册库）时，后台要实打实去爬这些库，**不是秒回**。给你一个直观的预期：
+借 WHO ICTRP 做全球检索（一次调用镜像 14+ 注册库）。**耗时取决于检索面宽窄**——小结果集（≤100 条 / 窄词如 `osimertinib`）走纯 HTTP 直连通道，**数秒即回**（2026-09-08 起，无需启动浏览器）；大结果集（宽词、多字段筛选）才会由浏览器翻页取数，需 **1 到 5 分钟**。给你一个直观的预期：
 
-- **等多久**：一次真实检索，后台通常要 **1 到 5 分钟**才把数拿回来。技能会先给你一张"已提交、正在跑"的回执，然后自动轮询，跑完才返结果——这段时间你不用一直盯着，结果好了自然会回来。
+- **等多久**：小结果集（窄词 / ≤100 条）**数秒**即回；大结果集（宽词如 `cancer`、多字段筛选）后台需浏览器翻页，通常要 **1 到 5 分钟**才把数拿回来。技能会先给你一张"已提交、正在跑"的回执，然后自动轮询，跑完才返结果——这段时间你不用一直盯着，结果好了自然会回来。
 - **为什么会贴着 5 分钟**：统一的第三方端点外侧有一道 **5 分钟硬墙**（网关上限）。像 `cancer` 这种宽词、或"全球 + 不限国家"的大检索面，处理时间可能贴着这道墙走，极少情况下会超时失败。真遇到了，技能会明明白白告诉你，而不是悄悄把数据丢了。
 - **超过 5 分钟怎么办**：如果检索量超过 5 分钟仍未能全部完成，系统会**返回已检索到的部分结果**（而非报错），并在输出中标注 `is_timeout: true`。你可以在等待时间与数据完整性之间自行取舍：要完整结果请耐心等待；要快速预览可接受部分结果。
 - **5 分钟大约对应多少条数据**：取决于检索面的宽窄，经验值如下：
 
-  | 关键词类型 | 典型命中量 | 5 分钟能否拿完 | 经验吞吐 |
+  | 关键词类型 | 典型命中量 | 能否快速拿完 | 经验吞吐 |
   |-----------|-----------|--------------|---------|
-  | 窄词（如 `osimertinib`） | 20-200 条 | ✅ 轻松拿完 | WHO ~100-150 页/min，CDE ~200-300 页/min |
-  | 中词（如 `diabetes`） | 5,000-50,000 条 | ❌ 只能拿部分 | 5 分钟 ≈ 1000-1500 条 |
-  | 宽词（如 `cancer`） | 100,000+ 条 | ❌ 只能拿很少部分 | 首页 ~30s，翻页 ~2-3s/页（WHO） |
+  | 窄词（如 `osimertinib`，≤100 条） | 0–100 条 | ✅ **HTTP 直连秒回**（2–15s，不开浏览器） | 首屏 ~2–6s；≤10 页自动翻完（~2–4s/页 + 节流） |
+  | 中词（如 `diabetes`） | 5,000-50,000 条 | ⚠️ 取部分（HTTP 取满 10 页 ~100 条后浏览器接管） | >100 条走翻页，5 分钟 ≈ 1000-1500 条 |
+  | 宽词（如 `cancer`） | 100,000+ 条 | ❌ 只能拿很少部分 | 首页 ~2–6s（HTTP 探测），翻页 ~2-3s/页（浏览器） |
 
   拿不全怎么办：① 接受部分结果（做趋势分析够用）；② 缩小检索面（加干预措施/申办方/国家限定）；③ 分多次查（按维度拆分）。
-- **数据量怎么收着点**：WHO 全球检索的结果集可以非常大。如果一次查回来的数偏少、或者超时了，多半是**检索面太宽**——把关键词收窄些（比如用 `osimertinib` 而不是 `cancer`），或改用**高级检索**（在对话里说"高级检索"，由代码自动拼 `药物 AND 适应症` 这类更精准的过滤，返回量更小、也更快）。另外每天还有 **100 次需求**的配额上限（见上 FAQ），正常使用远碰不到。
+- **数据量怎么收着点**：WHO 全球检索的结果集可以非常大。如果一次查回来的数偏少、或者超时了，多半是**检索面太宽**——把关键词收窄些（比如用 `osimertinib` 而不是 `cancer`），或改用**高级检索**（在对话里说"高级检索"，由代码自动拼 `药物 AND 适应症` 这类更精准的过滤，返回量更小、也更快）。另外（2026-09-08 起）对 **>100 条**的结果集，HTTP 通道按设计最多取回 10 页（约 80–100 条）并标注 `is_partial`——这是**能力边界而非故障**；要更全请收窄范围，或用更大翻页参数。每天还有 **100 次需求**的配额上限（见上 FAQ），正常使用远碰不到。
 
 ## 安全（safe preview）
 
@@ -171,13 +210,13 @@
 - **WHO ICTRP** —— 统一 Coze `/run` 端点（第三方，需 Bearer token）；一次调用镜像 14+ 注册库。
 - **ChiCTR / ISRCTN / DRKS** —— 经**同一**统一 Coze `/run` 端点，分别以 `source=chictr|isrctn|drks` 提供（第三方，共用 token）。
 
-WHO ICTRP 与中国 CDE 在统一端点上**共用一枚长期有效 token**；该 token 是公开共用凭据，以 XOR+base64 混淆 blob **内嵌于 `config/keys.py`**（随包发布），开箱即用。解析优先级：`--token` CLI > 环境变量 `CT_REGISTRY_COZE_TOKEN`（遗留别名 `ICTRP_WORKFLOW_TOKEN`）> 内嵌 blob（ct-base §5.236）。任何保密数据都不会到达上述任一端点。
+WHO ICTRP 与中国 CDE 在统一端点上**共用一枚长期有效 token**；该 token 是公开共用凭据，以 XOR+base64 混淆 blob **内嵌于 `adapters/endpoint_token.py`**（随包发布），开箱即用。解析优先级：`--token` CLI > 环境变量 `CT_REGISTRY_COZE_TOKEN`（遗留别名 `ICTRP_WORKFLOW_TOKEN`）> 内嵌 blob（ct-base §5.236）。任何保密数据都不会到达上述任一端点。
 
 ### Coze key（统一端点凭证）
 
 统一 Coze 端点 `https://ct-search.coze.site/run`（CDE、WHO ICTRP、ChiCTR、ISRCTN、DRKS 共用）需要一枚 Bearer token。它是一枚**公开共用凭证**——由作者发布、绑定在端点上，并非你的个人私密。
 
-- **开箱即用**：token 以混淆（XOR+base64）blob 的形式内嵌在 `config/keys.py` 中、随技能一同发布，因此检索无需任何配置即可运行。
+- **开箱即用**：token 以混淆（XOR+base64）blob 的形式内嵌在 `adapters/endpoint_token.py` 中、随技能一同发布，因此检索无需任何配置即可运行。
 - **如何覆盖**（例如作者重新签发 token）：在命令行传 `--token <JWT>`，或设置环境变量 `CT_REGISTRY_COZE_TOKEN`。请勿把 token 粘进对话。
 - **是混淆、非加密**：编码只是为了不被随意查看，挡不住有意的提取。把它当凭证看待，但无需当成最高机密严防死守。
 - **安全扫描器**：部分自动化扫描器会标记 `extsvc_client.py`（含 HTTP/Bearer 调用）。该 blob 是公开共用凭证，并非私钥——仓库内不含任何私密密钥。覆盖方式仅走 CLI/环境变量。
@@ -246,7 +285,7 @@ python scripts/enrich_pubchem.py --drug "osimertinib" --targets --out pubchem.js
 > `--date-after` 保留旧本地后过滤（开始年份下限）。
 
 ### 统一端点（WHO ICTRP + 中国 CDE + ChiCTR / ISRCTN / DRKS）
-WHO + CDE + ChiCTR / ISRCTN / DRKS 共用同一个 Coze 端点；token 已内嵌于 `config/keys.py`（随包发布），无需手动操作。如需覆盖（如极罕见 403），设环境变量 `CT_REGISTRY_COZE_TOKEN` 或传 `--token`。各源 CLI 示例见 `references/cli_reference.md`。
+WHO + CDE + ChiCTR / ISRCTN / DRKS 共用同一个 Coze 端点；token 已内嵌于 `adapters/endpoint_token.py`（随包发布），无需手动操作。如需覆盖（如极罕见 403），设环境变量 `CT_REGISTRY_COZE_TOKEN` 或传 `--token`。各源 CLI 示例见 `references/cli_reference.md`。
 
 ### CDE 四种调用模式（已退役 2026-08-12；仅作本地归档参考；生产请走统一端点）
 生产环境 CDE 检索走上面的统一端点；已退役的独立工作流仅归档于本地 `CDE/` 目录（不随包发布）。
@@ -294,10 +333,10 @@ python scripts/export_xlsx.py --in normalized.json --out report.xlsx --title "As
 |---|---|---|
 | CT.gov `URLError` | 无网络 / 代理 | 确认 clinicaltrials.gov 可达；配置代理 |
 | CDE 空白 / "access blocked" | 安全狗 WAF 拦截浏览器 | 用统一端点工作流（推荐）；或协助粘贴 → `parse_cde.py`（不出域） |
-| WHO / CDE HTTP 401 | 缺 `Authorization: Bearer <token>` | token 内嵌于 `config/keys.py`（随包）；若仍 401，设 `CT_REGISTRY_COZE_TOKEN` 或传 `--token` |
+| WHO / CDE HTTP 401 | 缺 `Authorization: Bearer <token>` | token 内嵌于 `adapters/endpoint_token.py`（随包）；若仍 401，设 `CT_REGISTRY_COZE_TOKEN` 或传 `--token` |
 | WHO / CDE HTTP 403（罕见） | token 损坏 / 吊销 | 经环境变量 `CT_REGISTRY_COZE_TOKEN` / `--token` 重发（长期有效，403 非过期） |
 | CDE HTTP 500 `字段类型错误` | 字段写成 `{"value":x}` 或 `project_list` 写成数组 | 用纯字符串；`project_list` 须为 JSON **字符串** |
-| ISRCTN 404 | 公开 API 失效（2026-07-20） | 用统一端点 `source=isrctn` |
+| ISRCTN 空 / 0 条 / 异常 | 官方 XML API（`/api/query/format/default`，2026-09-08 起替代网页爬取）异常或站点软错误 | 用统一端点 `source=isrctn`；编排层自动切 WHO 兜底筛 ISRCTN 记录 |
 | CDE 读取超时 | 大结果集 / 网关抖动（单次上限约 300 秒） | 用默认 300 秒重试；属瞬时，非载荷错误 |
 
 ### 链式调用
@@ -311,11 +350,9 @@ python scripts/export_xlsx.py --in normalized.json --out report.xlsx --title "As
 
 ## 保密声明
 
-> CT 全系列技能由 20+ 个技能构成，按「保密信息出域风险 + 是否对外检索」分为 A、B 两档，完整覆盖新药临床试验（Clinical Trial）全流程的各方面需求。
+> CT 全系列技能由 20+ 个技能构成，按「输入是否涉密」分为 **A、B 两档**（network / egress / publish 为独立正交属性，详见 ct-base §11），完整覆盖新药临床试验（Clinical Trial）全流程的各方面需求。
 >
-> - **A 档（非涉密·公开）**：输入为普通数据，可完全本地运行（`network=off`）或对外公开检索（`network=public-retrieval`，如 ct-registry / ct-advisor 等）；不涉及任何保密信息。A 档技能均在 GitHub 公开发布。
-> - **B 档（涉密·内部）**：涉及药企需严格保密的临床试验数据、内部资讯等敏感内容（如 ct-analysis、ct-sdtm、ct-eligibility 等）；B 档在本地处理（`egress=none`，数据不出域）或需审批出站（`egress=approval-req`，如 ct-eligibility）。B 档技能仅限企业内部使用，目前不对外公开发布。
->
-> 若您对这些涉密技能确有实际需求，欢迎与作者联系，定制并安装相关技能。
+> - **A 档（输入非涉密）**：输入为普通数据，可完全本地运行（`network=off`）或对外公开检索（`network=public-retrieval`，如 ct-registry / ct-advisor 等）；不涉及任何保密信息。A 档技能均在 GitHub 公开发布。
+> - **B 档（输入涉密）**：输入含药企需严格保密的临床试验数据 / 方案 / CRF（如 ct-analysis、ct-sdtm、ct-protocol、ct-eligibility 等）；B 档**既能本地处理**（`egress=none`，数据不出域）**也能对外公开检索**（`network=public-retrieval`，如 ct-protocol 调 ct-registry / ct-literature 抓取公开试验设计与文献作参考——仅公开查询词出域）；或需审批出站（`egress=approval-req`，如 ct-eligibility）。但**均不对外公开发布**；涉密输入绝不随包 / 出站；若有定制 / 本地部署需求，欢迎与作者联系。
 >
 > 📧 联系方式：medstatstar@gmail.com，张文彤（Wintone Zhang）

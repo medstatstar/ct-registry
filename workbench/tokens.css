@@ -1,0 +1,107 @@
+/* =============================================================================
+ * ct-base · 工作台统一设计令牌 (Design Tokens)
+ * -----------------------------------------------------------------------------
+ * 全家族工作台**强制共享**的 CSS 自定义属性。规则（详见 ct-base/references/workbench_ui.md §3）：
+ *   1. 结构令牌（--wb-* 前缀）名称与取值**全家族一致**，禁止各技能自造别名
+ *      （旧实现混用 --brand / --accent / --navy 属违规，须迁移到 --wb-brand 等）。
+ *   2. 品牌识别只通过「品牌预设」覆盖 --wb-brand / --wb-brand-2 / --wb-brand-soft
+ *      三个变量；结构令牌（间距/圆角/字体/阴影/状态色/底纹）一律不改。
+ *   3. 预设由 <html data-brand="..."> 选择；未设时回退 clinical-blue。
+ *   4. 禁止 emoji 当图标/文案（含状态文案），图标一律内联 SVG，状态用色块+文字。
+ * ========================================================================== */
+
+/* ---- 结构令牌：所有技能一致（勿改） ---- */
+:root{
+  /* 字体 */
+  --wb-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+             "PingFang SC", "Microsoft YaHei", sans-serif;
+  --wb-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* 圆角 */
+  --wb-radius:    14px;
+  --wb-radius-sm: 10px;
+  --wb-radius-lg: 20px;
+  --wb-radius-pill: 999px;
+
+  /* 间距 */
+  --wb-gap:   16px;
+  --wb-pad:   20px;
+  --wb-pad-sm:12px;
+
+  /* 阴影 */
+  --wb-shadow:   0 6px 24px rgba(15,23,42,.08);
+  --wb-shadow-sm:0 2px 8px  rgba(15,23,42,.06);
+
+  /* 状态语义色（与业务品牌解耦，全家族统一） */
+  --wb-ok:   #059669;
+  --wb-warn: #d97706;
+  --wb-err:  #dc2626;
+  --wb-ok-bg:   #ecfdf5;
+  --wb-warn-bg: #fffbeb;
+  --wb-err-bg:  #fef2f2;
+
+  /* 中性文本/底纹（可被品牌预设微调） */
+  --wb-ink:  #0f172a;
+  --wb-sub:  #5b6776;
+  --wb-muted:#94a2b0;
+  --wb-bg:   #f5f8fc;
+  --wb-panel:#ffffff;
+  --wb-line: #e4e9f0;
+  --wb-line-soft:#eef2f7;
+  --wb-row-hover:#eff6ff;          /* 列表行 hover / 选中底纹（组件用） */
+  --wb-row-sel:  #eff6ff;
+  --wb-bg-2:     #eef3fa;          /* 分区/渐变用：比 --wb-bg 深一档的页面背景 */
+  --wb-row-alt:  #f6f9fd;          /* 列表斑马纹：交替行底色 */
+  --wb-topbar-bg:linear-gradient(90deg, var(--wb-brand), var(--wb-brand-2)); /* 顶栏品牌渐变实心条 */
+  --wb-topbar-ink:#ffffff;          /* 顶栏标题/图标色 */
+  --wb-topbar-sub:rgba(255,255,255,.82); /* 顶栏副标题色 */
+  --wb-on-topbar:#ffffff;           /* 顶栏上控件（按钮/语言/状态）文字·图标·边框色 */
+
+  /* 品牌三连（默认 clinical-blue，由 data-brand 覆盖） */
+  --wb-brand:      #2563eb;
+  --wb-brand-2:    #0ea5e9;
+  --wb-brand-soft: #eff6ff;
+
+  /* 品牌衍生（由 --wb-brand 自动算，一般无需覆盖） */
+  --wb-brand-ink:  var(--wb-brand);
+  --wb-on-brand:   #ffffff;
+}
+
+/* ---- 品牌预设：仅改 --wb-brand / -2 / -soft / 少量中性色 ---- */
+:root[data-brand="clinical-blue"]{
+  --wb-brand:#2563eb; --wb-brand-2:#0ea5e9; --wb-brand-soft:#eff6ff;
+  --wb-bg:#f5f8fc; --wb-panel:#ffffff; --wb-line:#e4e9f0; --wb-ink:#0f172a; --wb-sub:#5b6776;
+}
+:root[data-brand="clinical-indigo"]{   /* ct-advisor 既有蓝玻璃风，统一到 wb- 体系 */
+  --wb-brand:#1C6DD0; --wb-brand-2:#5B9BD5; --wb-brand-soft:#eef1fb;
+  --wb-bg:#eef1fb; --wb-bg-2:#e3e9f6; --wb-panel:rgba(255,255,255,.92);
+  --wb-line:rgba(28,109,208,.20); --wb-ink:#0f2535; --wb-sub:#5a7184;
+}
+:root[data-brand="academic-navy"]{     /* ct-literature 学术藏青+金 */
+  --wb-brand:#1c3a5c; --wb-brand-2:#4a7fb5; --wb-brand-soft:#eef4fa;
+  --wb-bg:#eef2f7; --wb-panel:#ffffff; --wb-line:#dbe3ec; --wb-ink:#1a2430; --wb-sub:#6b7a8a;
+  --wb-accent-gold:#a8843c;            /* 学术强调色，仅 literature 用 */
+}
+:root[data-brand="clinical-teal"]{
+  --wb-brand:#0e7490; --wb-brand-2:#06b6d4; --wb-brand-soft:#e6f3f7;
+  --wb-bg:#f2f7f8; --wb-panel:#ffffff; --wb-line:#dce8ea; --wb-ink:#0f2a30; --wb-sub:#557079;
+}
+
+/* ---- 深主题（可选，主色不变，仅底纹反转） ---- */
+:root[data-theme="dark"]{
+  --wb-bg:#0f172a; --wb-bg-2:#0b1220; --wb-panel:#16213a; --wb-line:#26334d;
+  --wb-ink:#e7edf6; --wb-sub:#9fb0c3; --wb-muted:#64748b;
+  --wb-shadow:0 6px 24px rgba(0,0,0,.35); --wb-shadow-sm:0 2px 8px rgba(0,0,0,.28);
+  --wb-ok-bg:#06281d; --wb-warn-bg:#2a1f06; --wb-err-bg:#2a0f0f;
+  --wb-bg-2:#0b1220; --wb-row-alt:#13203a;
+  --wb-topbar-bg:linear-gradient(90deg, var(--wb-brand), var(--wb-brand-2));
+  --wb-topbar-ink:#ffffff; --wb-topbar-sub:rgba(255,255,255,.8); --wb-on-topbar:#ffffff;
+}
+
+/* ---- 基础排版（所有工作台继承，禁止各技能重定义 body 背景/字体裸值） ---- */
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:var(--wb-font); color:var(--wb-ink); background:var(--wb-bg);
+  line-height:1.6; min-height:100vh; -webkit-tap-highlight-color:transparent;
+}

@@ -899,14 +899,13 @@
     "en": "Auto-detect",
     "zh": "自动识别"
   },
-
   "auth.coze_outbound": {
-    "en": "First-time cloud refinement needs to send your question to the Coze endpoint ({endpoint}). This improves answer quality and coverage. No PII / subject data / unpublished project data is sent. Allow sending for this session?",
-    "zh": "首次使用云端精校需将您的问题发送到 Coze 端点（{endpoint}）。这会提升答案的质量与覆盖度，且不会发送任何个人信息、受试者信息或未公开项目数据。是否允许本次发送？"
+    "en": "First-time cloud service needs to send your request to the Coze endpoint ({endpoint}). This improves answer quality and coverage. No PII / subject data / unpublished project data is sent. Allow sending for this session?",
+    "zh": "首次使用云端服务需将您的请求发送到 Coze 端点（{endpoint}）。这会提升答案的质量与覆盖度，且不会发送任何个人信息、受试者信息或未公开项目数据。是否允许本次发送？"
   },
   "auth.coze_outbound_denied": {
-    "en": "Declined: cloud refinement is disabled for this session; the agent will answer using local reference materials only (answer quality/coverage is reduced). Add the endpoint to config.json 'auto_approve_endpoints' to skip this prompt next time.",
-    "zh": "已拒绝：本次会话关闭云端精校，agent 将仅使用本地参考资料作答（答案质量/覆盖度下降）。将端点加入 config.json 的 'auto_approve_endpoints' 列表可在下次跳过此提示。"
+    "en": "Declined: cloud service is disabled for this session; the agent will answer using local reference materials only (answer quality/coverage is reduced). Add the endpoint to config.json 'auto_approve_endpoints' to skip this prompt next time.",
+    "zh": "已拒绝：本次会话关闭云端服务，agent 将仅使用本地参考资料作答（答案质量/覆盖度下降）。将端点加入 config.json 的 'auto_approve_endpoints' 列表可在下次跳过此提示。"
   },
   "auth.serial_blocked": {
     "en": "[AUTH-BLOCK] serial refine blocked — falling back to local draft.",

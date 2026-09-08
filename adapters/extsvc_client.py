@@ -18,7 +18,7 @@ CONTRACT (mirrors CDE):
     `{"source": <SRC>, "records": [...], "total": N}`.
   - Token resolution (ct-base §5.236, no .dat file dependency):
     `--token` > env `CT_REGISTRY_COZE_TOKEN` (legacy alias `ICTRP_WORKFLOW_TOKEN`)
-    > embedded public blob in `config/keys.py` (XOR+base64, shipped with the package).
+    > embedded public blob in `adapters/endpoint_token.py` (XOR+base64, shipped with the package).
     Public shared Coze workload-identity token; embedded per ct-base §5.239 / §5.243 so
     the published package works out-of-the-box (SkillHub strips *.dat silently).
     Legacy local `config/ictrp.dat` is only a silent fallback read (read-only; never persisted to disk).
@@ -38,26 +38,26 @@ from pathlib import Path
 
 import usage_guard
 
-# 凭据解析改走 config/keys.py（ct-base §5：公开凭据内嵌 .py，不再依赖 .dat 文件）。
-# 确保技能根目录在 sys.path，以便 `from config.keys import ...`（config/ 在技能根下）。
+# 凭据解析改走 endpoint_token.py（ct-base §5：公开凭据内嵌 .py，不再依赖 .dat 文件）。
+# 确保技能根目录在 sys.path，以便 `from endpoint_token import ...`（adapters/ 下同目录兄弟模块）。
 import sys as _sys
 from pathlib import Path as _Path
 _SKILL_ROOT = _Path(__file__).resolve().parent.parent
 # adapters/ modules import the pure-local shared util `usage_guard` from
-# scripts/, and config.keys lives at the skill root. Expose both so
-# `import usage_guard` / `from config.keys import ...` resolve whether this
+# scripts/, and endpoint_token lives in adapters/ (same dir as this file). Expose both so
+# `import usage_guard` / `from endpoint_token import ...` resolve whether this
 # file is run as a subprocess (sys.path[0] == adapters/) or imported.
 for _d in (str(_SKILL_ROOT), os.path.join(str(_SKILL_ROOT), "scripts")):
     if _d not in _sys.path:
         _sys.path.insert(0, _d)
-from config.keys import (
+from endpoint_token import (
     get_secret as _keys_get_secret,
     get_token as _keys_get_token,
 )
 
 
 def get_token(cli_token=None, token_env=None):
-    """统一端点（coze）token。委托给 config.keys.get_token（ct-base §5）。
+    """统一端点（coze）token。委托给 endpoint_token.get_token（ct-base §5）。
 
     解析优先级：CLI(--token) > env(CT_REGISTRY_COZE_TOKEN / 遗留 ICTRP_WORKFLOW_TOKEN)
     > 内嵌混淆 blob；不再读取/写入 config/ictrp.dat 作为发布机制。
@@ -238,8 +238,14 @@ def _finalize_async(source, endpoint_base, data, out, timeout, run_id):
     print(f"[{source.lower()}-extsvc] {len(records)} records -> {out}")
 
 
-def _run_async_poll(source, endpoint, token, run_id, out, timeout):
-    """异步模式：轮询 /run/status/{run_id}，指数退避，总上限 timeout 秒。"""
+def _run_async_poll(source, endpoint, token, run_id, out, timeout,
+                    finalize=None, on_timeout=None):
+    """异步模式：轮询 /run/status/{run_id}，指数退避，总上限 timeout 秒。
+
+    finalize: 可选回调，签名 (source, endpoint_base, data, out, timeout, run_id)；
+        默认 _finalize_async。ictrp 等适配器可注入专属 finalize（如额外解析 payload）。
+    on_timeout: 可选回调，签名 (out, source, timeout, phase)；默认 _write_timeout。
+    """
     import requests
     endpoint_base = endpoint.rsplit("/run", 1)[0]
     status_url = f"{endpoint_base.rstrip('/')}/run/status/{run_id}"
@@ -268,9 +274,15 @@ def _run_async_poll(source, endpoint, token, run_id, out, timeout):
             time.sleep(min(wait, max(1, deadline - time.time())))
             wait = min(wait * 2, 30)
             continue
-        _finalize_async(source, endpoint_base, data, out, timeout, run_id)
+        if finalize is None:
+            _finalize_async(source, endpoint_base, data, out, timeout, run_id)
+        else:
+            finalize(source, endpoint_base, data, out, timeout, run_id)
         return
-    _write_timeout(out, source, timeout, "poll")
+    if on_timeout is None:
+        _write_timeout(out, source, timeout, "poll")
+    else:
+        on_timeout(out, source, timeout, "poll")
 
 
 def run(source, endpoint, token, payload, out, timeout):
@@ -343,12 +355,34 @@ def make_base_parser(source, default_endpoint):
     ap.add_argument("--demand-id",
                     help="检索需求标识：同一 demand_id 当日只计 1 次配额（WHO+CDE/各源合并、"
                          "关键词微调/重复检索均不重复计数）。省略则每次调用各计 1 次。")
+    # ct-base §20.12：计费身份标识预留透传（可选；服务端 extra='ignore' 安全忽略）
+    ap.add_argument("--account-id",
+                    help="（可选）付费账户标识，透传至统一端点（ct-base §20.12 计费预留；"
+                         "服务端未部署计费中间件时忽略，向后兼容、不阻断）")
+    ap.add_argument("--billing-token",
+                    help="（可选）服务端签发的计费令牌，透传至统一端点")
     return ap
+
+
+def _attach_billing(payload, args):
+    """把调用方显式提供的计费标识并入出站 payload（ct-base §20.12）。
+
+    payload 为 build_payload 返回的 dict；仅注入非空字段。服务端未部署计费时
+    由 `extra='ignore'` 忽略，不改变既有检索行为。
+    """
+    if not isinstance(payload, dict):
+        return
+    if getattr(args, "account_id", None):
+        payload["account_id"] = args.account_id
+    if getattr(args, "billing_token", None):
+        payload["billing_token"] = args.billing_token
 
 
 def dispatch(source, default_endpoint, args, build_payload):
     """Common main() tail for the thin wrappers."""
     payload = build_payload(args)
+    # ct-base §20.12：计费身份标识透传（可选，服务端 extra='ignore' 安全忽略）
+    _attach_billing(payload, args)
     token = get_token(args.token)
     if not args.run:
         print_preview(source, args.endpoint, token, payload, args.out)
