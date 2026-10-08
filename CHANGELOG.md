@@ -1,5 +1,119 @@
 # Changelog
 
+## v0.13.0 (2026-10-08) · pytrials + Docling 外部开源资产引用
+
+> 基于《临床试验Skill推荐》分析，新增 pytrials 和 Docling 两个外部开源工具集成。
+
+- **新增 External Open-Source Integrations 表格**：列出 pytrials（CT.gov 批量检索客户端）和 Docling（法规文档结构化解析）两个工具
+- **pytrials 增强模式 (opt-in)**：使用 pytrials 作为官方 API 客户端批量拉取 CT.gov 字段，新增适应症分布热力图、终点设计对比、中心历史项目检索
+- **增量兼容**：新增内容为可选引用，不影响现有 9 源检索体系和回归测试
+
+## v0.12.1 (2026-10-07) · 接入 `entry_point` 调用来源标记（ct-base coze_io_contract §1.3 / §2.3）
+
+> 飞书searchlog 新增 `entry_point` 独立列，用于按**调用来源**（技能本身 / 工作台 Web 应用 / 未来第三方 API）直切筛选。本技能此前未发送该字段，现**客户端 + coze 侧**一并补齐。
+
+**客户端（本地出站信封）**
+
+- **`adapters/search_ictrp.py`**：新增模块级 `_ENTRY_POINT = "skill"` + `set_entry_point(v)` + `entry_point()`（枚举白名单 `skill`/`workbench`/`api`，空值/空白/非法值一律回退 `"skill"`，绝不写 `None` 或脏值）；`_attach_coze_contract()` 在顶层信封注入 `"entry_point"`（与 `query_origin` / `skill_version` 同级，`setdefault` 保证显式传参优先 + 幂等）。
+- **与 `query_origin` 正交（🔴 不得混用）**：`query_origin` 按机器（硬件 ID / 主机名 SHA-256），同一台机器上 skill 与 workbench 算出的哈希逐字节相同 → 无法区分界面来源；`entry_point` 按入口/界面，故须独立字段。
+- **未并入 `querystr` / `resultstr`**（§2.3 硬约束）：`entry_point` 只作顶层信封，由coze 端分流到飞书独立列。
+
+**coze 侧（`adapters/coze/`，服务端私有 §16.7 · 本地已改，待发布）**
+
+- **`src/graphs/state.py`**：三个承载模型**均显式声明** `entry_point: Optional[str]` —— `GraphInput`（入口投影）/ `GlobalState`（图内传递）/ `FeishuWriteInput`（节点入参）。**漏声明会被 `extra="ignore"` 静默丢弃**，与已踩过的 `skill_version` / `total_count` 同一根因，故三处一个都不能省。
+- **`src/graphs/nodes/feishu_write_node.py`**：record 字面量新增 `"entry_point": getattr(state, "entry_point", None) or "skill"`；模块 docstring 补§2.3 落点说明。
+- **`src/graphs/nodes/publisher_pdf_batch_node.py`**：该节点自建 record（ct-literature PDF 批次表），同样补 `"entry_point"` 键，保持同表列名一致。
+- **三镜像同表**：ct-registry / ct-samplesize / meta-analysis 共用同一飞书表（`DEFAULT_APP_TOKEN=Pog0bGNMbaCWMIsGRNpckHcnn9f` / `DEFAULT_TABLE_ID=tblQ8OQ0rXsXQWkh`，靠 `skillname` 列区分技能），故列名必须**精确统一为小写 `entry_point`**，否则 `batch_create` 报未知字段名。已核对三镜像列名一致。
+
+**验证**
+
+- 新增 `tests/test_coze_entry_point.py`（C1–C6，6/6 RC=0）：三模型声明齐全 / 两个 record 均含该键 / 列名精确小写 / 回退语义（脏值与空值均回退 skill，绝不写 None 或空串）/ 不并入 resultstr·querystr / **pydantic 2.13.5 模型层实测**（老客户端不带字段得 None→回退 skill，新客户端值投影保留）。
+- 全链路贯通实测：客户端 payload → `GraphInput` → `FeishuWriteInput` → record 取值，`workbench` 全程保留；老客户端回退 `skill`。
+- 跨技能客户端契约回归 `ct-base/scripts/tests/test_entry_point.py`（E1–E9，9/9）；`py_compile` 三个改动文件均通过。
+- 既有 `tests/regression_harness.py` PASS=28 FAIL=2 —— **两个失败为既存问题**（case09/case10 引用的 `scripts/search_ictrp.py` 路径早已不存在，文件在 `adapters/`）。已用 `git stash` 对照证明：改动前后同为 PASS=28 FAIL=2，与本次无关。
+
+> ⚠️ **部署铁律（§2.3）**：飞书列已存在（2026-10-07 表头可见），故部署新 coze 代码是安全方向 ——「新coze + 有列」正常落值，不命中 `batch_create` 未知字段名报错窗口。
+> ⚠️ coze 侧 `adapters/coze/` 已被 `.gitignore` 忽略（服务端私有），**发布需手动同步到 Coze 控制台**，不在 git 发布链路内。
+
+## v0.12.0 (2026-10-06) · 工作台安全加固：静态文件白名单（P0）+ 路径黑名单（P3）
+
+> 已发布工作台应用（`ct-registry.app.workbuddy.host`）安全加固，阻止源码/凭据/敏感数据被 HTTP 下载。
+
+- **`workbench/server.py` + `workbench/publish-dist/workbench/server.py`**：
+  - P0: 新增 `_STATIC_ALLOWED` 扩展名白名单（12 种），非白名单扩展名返回 403。
+  - P3: 新增 `_STATIC_PATH_BLOCKED` 路径黑名单（`adapters`, `runs`, `scripts`, `out`, `references`），阻止目录级访问，返回 403 `forbidden path`。
+- **影响**：Coze 服务端源码镜像目录结构无法通过 HTTP 探测；`references/*.json` 映射文件无法访问（已由 P1 文件名保护，P3 再加一刀）。`/api/*` 端点（`/api/search`, `/api/runs` 等）不受影响——走独立路由，不经过 `_static()`。
+- **回归**：`curl http://127.0.0.1:8790/../adapters/coze/src/main.py` → 403；`curl http://127.0.0.1:8790/../references/term_map.json` → 403。
+
+> 已发布工作台应用（`ct-registry.app.workbuddy.host`）安全加固，阻止源码/凭据被 HTTP 下载。
+
+- **`workbench/server.py`**：`_static()` 新增 `_STATIC_ALLOWED` 扩展名白名单（12 种：css/js/svg/png/ico/json/woff/woff2/ttf/map/html/htm），非白名单扩展名返回 403 `forbidden type`。
+- **`workbench/publish-dist/workbench/server.py`**：同步上述白名单修复（发布副本）。
+- **影响**：`.py` / `.env` / `.pyw` 等源码/凭据文件无法通过 HTTP 下载；前端静态资源（css/js/ico/json 等）不受影响。
+- **回归**：`curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/../scripts/ct_registry.py` → 403。
+
+## v0.10.0 (2026-09-18) · resultstr 检索侧审计摘要（status/ok/total/s3）+ 遗留字段补声明
+
+> ⚠️ **归版说明（2026-09-29 周检补）**：SKILL.md 当前版本为 `0.10.0`，但本文件此前首部恒为
+> `Unreleased`、全篇无 `0.10.0` 条目（ct-base §16.8 / spec_lint F13 ERROR）。现按「首条版本须与
+> SKILL.md 一致」将本条归为 `v0.10.0`。**下方自 2026-09-17 起至 `v0.9.3 (2026-09-06)` 之前的
+> 全部 `Unreleased` 条目同属 0.10.0 变更集**，建议发布前由人工一次性合并为单条 `v0.10.0` 记录。
+
+- **背景（用户指令）**：飞书 `resultstr` 目前仅记 `runtime_sec` + 版本字段，信息不足以审计
+  「分析是否 OK / 检索到多少条 / 是否走 S3」。参考 `publisher_pdf_batch` 已有的
+  `status/ok/total/s3/runtime_sec` 摘要形态，registry 检索路径的 `resultstr` 也应携带同样结构，
+  使同一飞书表、同一 `resultstr` 列的 record 形状一致、可按端点版本归因。
+- **改动（均在 `adapters/coze/src/`，服务端，需重新打包上传 coze 才生效）**：
+  1. `nodes/feishu_write_node.py` —— `resultstr` 检索侧新增 `status` / `ok` / `total` / `s3`
+     （对齐 `publisher_pdf_*` 审计 schema，ct-base §2.2）；`hit_count` 重命名为 `total`、
+     `returned` 并入 `ok`（project_list.projects 长度；不可用→信任 total_count）。
+     `log_only` 模式仍只写 `runtime_sec` + 版本字段，不写检索统计（不谎报 0 命中）。
+  2. `graphs/state.py` —— `FeishuWriteInput` **补声明** `total_count` / `project_list` /
+     `error_msg` / `log` / `s3_stored`（该模型 `extra="ignore"`；未声明字段被 langgraph 投影
+     丢弃、节点恒拿不到，与 §2.1 已修的 `skill_version` 同一根因）。**顺带修复 CHANGELOG
+     2026-09-17 记录的遗留 bug**：此前 `hit_count`/`returned`/`error`/`log` 大概率恒不落库。
+  3. `nodes/_version.py` —— `COZE_VERSION` `0.3.89` → `0.3.90`（resultstr schema 变更，需端点版本可归因）。
+  4. `scripts/selfcheck_log_only.py` —— 断言从 `hit_count` 改为 `total`/`ok`/`status`（L16/L16b/L17），
+     log_only 断言扩为「不含 total/ok/status/s3」。
+- **文档**：`adapters/coze/AGENTS.md` 飞书审计小节 `resultstr` 行更新为检索侧摘要 schema。
+- **验证**：`py_compile` 通过；`scripts/selfcheck_log_only.py` 全绿（L11-L17）。
+- ⚠️ **契约变更**：`resultstr` 弃用 `hit_count`/`returned`，改用 `total`/`ok`（与 pdf 路径对齐）。
+  旧审计看板若按 `hit_count` 解析需同步；端点版本 `0.3.90` 可作切换分界。
+
+## Unreleased (2026-09-17) · 飞书版本字段落点统一（ct-base coze_io_contract §2.1）
+
+- **背景（用户指令）**：版本字段写入位置不固定——registry 端点 `publisher_pdf_batch` 把
+  `skill_version` 写进 `querystr`，而 meta/samplesize 又各自不同 → 飞书表里同一信息位置不一致。
+  ct-base `references/coze_io_contract.md` §2.1 现规定：**版本字段一律写 `resultstr`，
+  `querystr` 不再存任何版本信息**。
+- **改动（均在 `adapters/coze/src/`，服务端，需重新打包上传 coze 才生效）**：
+  1. 新增 `graphs/nodes/_version.py::COZE_VERSION = "0.3.89"` —— 端点版本常量单一真源。
+     此前本端点**没有**版本常量，只以 `dist/coze_deploy_bundle_<ts>.zip` 时间戳区分，
+     审计表无法按端点版本归因；取值沿 CHANGELOG 末条 `v0.3.88` 顺延。
+  2. `nodes/feishu_write_node.py` —— `resultstr` 顶层新增 `skill_version` + `coze_version`
+     （均非空才写）；新增 `_strip_version_fields()`：客户端透传的 `querystr` 若含
+     `skill_version` / `coze_version` 一律剔除，保证落点唯一。
+  3. `nodes/publisher_pdf_batch_node.py` —— `_build_querystr()` **移除 `skill_version` 入参**；
+     `_build_resultstr()` 新增 `skill_version` / `coze_version`，元信息全空时与历史格式
+     逐字节一致。
+  4. `graphs/state.py` —— `FeishuWriteInput` **补声明 `skill_version`**（该模型 `extra="ignore"`，
+     未声明字段会被 langgraph 过滤、节点恒拿不到，与 CHANGELOG 已记录的 `log` 同坑）；
+     5 处 `skill_version` 描述改指 resultstr。
+- **文档**：`adapters/coze/AGENTS.md` 新增「飞书审计：版本字段落点」小节（querystr 禁写 /
+  resultstr 三键 / 升级纪律只改 `_version.py`）。
+- **验证**：`py_compile` 4 文件通过；冒烟确认 `_strip_version_fields` 剔除版本键、
+  `_build_querystr` 键集无版本键、`_build_resultstr` 空元信息与历史格式逐字节一致。
+- ⚠️ **遗留（未修，超出本次范围）**：`FeishuWriteInput` 同样未声明 `total_count` /
+  `project_list` / `error_msg` / `log` → `hit_count` / `returned` / `error` / `log`
+  大概率同样恒不落库（与 CHANGELOG 2026-09-08 记录的 `log` 同一根因）。需另行补声明后打包。
+
+## Unreleased (2026-09-08 20:08) · Coze 源码打包（feishu 审计 resultstr 重构）
+
+- 相对上一包 `coze_deploy_bundle_20260908_101717.zip` 仅 1 文件变更：`src/graphs/nodes/feishu_write_node.py` —— 审计 `resultstr` 与入参列 `querystr` 彻底解耦（去掉 `mode`），`hit_count` 恒写（0 命中亦有审计价值），新增 `returned`（实际返回条数，仅在截断/外置与命中数不同时出现）与 `log`（节点日志摘要，截断 120）。
+- `py_compile` 全量通过（src + scripts）。
+- **新部署包**：`dist/coze_deploy_bundle_20260908_200835.zip`（56 files / 192,115 B / MD5 `2d17d3201270d07c9df8c04a1ba0f964` / ZIP_OK，回读逐文件 MD5 与磁盘一致）；同步覆盖根目录 `coze_deploy_bundle.zip`。**待用户上传 Coze 控制台**；本地未发布。
+- ⚠️ 已知待办：`GlobalState`（`src/graphs/state.py`，pydantic `extra="ignore"`）**未声明 `log` 字段**，且无节点写入 → 新加的 `log` 审计键当前恒不落库（`getattr` 兜底不报错，非阻断）。需补 `log: Optional[str]` 并指定产出节点后再打一次包。
+
 ## Unreleased (2026-09-08 12:10) · SKILL.md description 重写：对齐 summary 写法
 
 - description 从 964 → **703 字节**（较原始 1985 降 65%），对齐 summary 风格：中文源列表 + 英文源列表 + 用途，去掉 B 档/零保密/Coze 等内部细节。
@@ -216,7 +330,7 @@
   - `SearchNodeInput`/`GlobalState` 新增 `page_start`（断点续抓起始页）与 `paginate_all`（显式翻页开关）。
   - `_do_who_search`：①`paginate_all=True` 时 `total>400` 不再早退，在 `WHO_NODE_BUDGET(270s)` 预算内从 `page_start` 尽力翻页，`is_partial` 标记缺口；②`page_start>1` 先 `__doPostBack` 跳页再续翻；③输出新增 `page_start/page_end/next_page_start`，客户端据 `next_page_start` 续抓累积；④默认不传时行为与历史逐字节兼容。
   - 客户端 `search_ictrp.py` 配套：`--page-start` / `--paginate-all` 透传进 payload（who search 分支）。
-- **验证**：5 文件 `py_compile` 全过；客户端 payload preview 确认 `page_start/paginate_all/max_pages` 正确入包；filesrv 部署后 grep 校验 4 项（page_start 参数/paginate_all 守卫/next_page_start/state 字段）全 FOUND。A/B 层 live 测试：EUCTR 直连 3/3 成功；切片累积测试运行中（见工作区 `who_sliced_test.log`）。
+- **验证**：5 文件 `py_compile` 全过；客户端 payload preview 确认 `page_start/paginate_all/max_pages` 正确入包；内网文件服务器部署后 grep 校验 4 项（page_start 参数/paginate_all 守卫/next_page_start/state 字段）全 FOUND。A/B 层 live 测试：EUCTR 直连 3/3 成功；切片累积测试运行中（见工作区 `who_sliced_test.log`）。
 - **遗留**：①C 需用户重新上传 Coze 控制台后才实际生效；②EUCTR 详情 `试验状态` 字段标签变体（部分国家版未捕获）待补；③A 层合并结果是样本（每片 10 条）非全量，全量仍需 C 层续抓循环。
 - **A 层 live 测试补记（2026-09-06 17:35）**：①按注册库前缀切片（`osimertinib EUCTR` 等）实测**不可行**——WHO 自由词不索引 Main ID（JPRN 片干净 0 条，非故障）；②正确切片轴为 **combined + `who_date_*` 年份桶**（真筛选，桶内服务端可完整翻页）；③但当前统一网关对 WHO combined 严重不稳（提交连续抖动重试 + 600s 轮询超时），日期桶单测未通过（`who_yearbucket_test.log`）——属端点当日故障，非代码问题，网关恢复后 A 的日期桶策略可用；④单片超时默认已提至 240s（120s 会误判）。
 - **复查修复（2026-09-06 17:45）**：`_do_who_search` 断点续抓补 2 个边界守卫——①跳页到 `page_start` 返回空时**回退从第 1 页重抓**（原实现会带着第 1 页数据冒充第 N 页，客户端合并错位）；②`page_start > total_pages` 时返回**空集 + `page_end=None` + `next_page_start=None`**（原实现会静默返回第 1 页数据且页码区间越界）。修复后重编译 + 重打包（287,776B），SHA256 三方（本地/zip/srcX）逐一核对一致（注意：PowerShell 5.1 读无 BOM UTF-8 中文会乱码，grep 校验需 `-Encoding UTF8`，此前一次 False 为读取误报）。

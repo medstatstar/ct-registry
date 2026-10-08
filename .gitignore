@@ -88,9 +88,15 @@ Thumbs.db
 #    重建纯净副本，此处仅作防御。
 *.ctbase_bak_*
 
-# ── workbench 运行产物（server.py 检索结果落盘，不随包发布）──
-workbench/runs/
-workbench/__pycache__/
+# ── workbench 整目录排除（用户 2026-09-29 决策：整目录排除，对齐 §16.12）──
+#    workbench/ 是 ct-registry 工作台 Web UI / 服务端（server.py、index.html、publish-kit/
+#    等应用发布基础设施），由独立发布流程（ct-publish → ct-registry.app.workbuddy.host）
+#    单独部署，**不属于技能包资产**，三平台发布均排除：
+#      · ClawHub：本文件 .clawhubignore 同名条目（ClawHub 不读 .gitignore）
+#      · GitHub ：git archive 纯净副本天然排除——workbench/ 已 `git rm --cached` 取消跟踪
+#      · SkillHub：同 GitHub，git archive 排除
+#    注意：本地磁盘文件保留，仅退出发布包；重新纳入需 `git add workbench/` 并撤销本条目。
+workbench/
 
 # ── 通用构建/编辑产物（P2 · 2026-09-06 补齐，保持与 .clawhubignore 同集）──
 *.bak
@@ -99,3 +105,9 @@ workbench/__pycache__/
 .idea/
 .vscode/
 _user_meta.json
+
+# ── 检索输出产物（adapters/search_ictrp.py 默认 --out 落盘，运行时产物非技能资产；
+#    2026-09-29 周检发布前检查补，spec_lint F20）──
+ictrp_extsvc.json
+# ── 工作台临时测试产物（不随包 / 不进版本库）──
+workbench/_writetest.tmp

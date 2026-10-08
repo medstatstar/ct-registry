@@ -8,6 +8,7 @@ import argparse
 import html
 import json
 import re
+import sys
 
 
 # --- Homepage URL resolver (req4: always emit a full, clickable URL) -------------
@@ -96,6 +97,13 @@ def norm_ctgov(study):
         "registry_id": im.get("nctId"),
         "title": _clean(im.get("briefTitle")),
         "status": sm.get("overallStatus"),
+        # upgrade D (stale-trial detection): CT.gov exposes the real
+        # last-update date in statusModule.lastUpdatePosted; also capture the
+        # results-first-posted date when present. Feeds stale_check.
+        "last_update_posted": (sm.get("lastUpdatePosted") or {}).get("date")
+                              or (sm.get("lastKnownStatus") or {}).get("date"),
+        "status_last_known": (sm.get("lastKnownStatus") or {}).get("date"),
+        "results_first_posted": (sm.get("resultsFirstPosted") or {}).get("date"),
         "phase": _first(dm.get("phases")) if dm.get("phases") else None,
         "conditions": [_clean(c) for c in cm.get("conditions", [])],
         "interventions": [_clean(i) for i in interventions],
@@ -654,6 +662,14 @@ def normalize_file(path):
         if _ei != _en:
             r["enrollment_raw"] = _en
         r["enrollment"] = _ei
+        # upgrade D (2026-09-29): stale-trial detection tag. Pure-local heuristic
+        # on last_update_posted + canonical status so competitors are not
+        # mis-scored from abandoned/withdrawn trials. See stale_check.py.
+    try:
+        import stale_check
+        recs = [stale_check.classify_stale(r) for r in recs]
+    except Exception as _e:  # noqa: BLE001 - never break normalization
+        print("[normalize] stale tag skipped: %s" % _e, file=sys.stderr)
     return recs
 
 

@@ -2086,5 +2086,215 @@
         "DHA omega-3 supplementation for insomnia"
       ]
     }
+  },
+  "4cc45c5a93a07996c830065412302374": {
+    "base": "测试主题",
+    "intent": "intervention",
+    "zh": [
+      "测试主题"
+    ],
+    "en": [
+      "Test subject"
+    ],
+    "per_source": {
+      "ctgov": {
+        "lang": "en",
+        "keywords": [
+          "Test subject"
+        ],
+        "note": "精确匹配 → 类别/靶点族枚举具体药名；裸类别易漏"
+      },
+      "who": {
+        "lang": "en",
+        "keywords": [
+          "Test subject"
+        ],
+        "note": "同 CT.gov；结构化须填具体药名"
+      },
+      "cde": {
+        "lang": "zh",
+        "keywords": [
+          "测试主题"
+        ],
+        "note": "子串匹配，多词兜底"
+      },
+      "chictr": {
+        "lang": "zh",
+        "keywords": [
+          "测试主题"
+        ],
+        "note": "子串匹配，多词兜底"
+      }
+    },
+    "risks": [
+      "未识别为药物类别，按疾病/干预词直接中英互译检索",
+      "英文词来自在线翻译（'Test subject'），未经人工验证，建议抽查"
+    ],
+    "confidence": {
+      "term_map": [
+        "测试主题"
+      ],
+      "alias": [],
+      "class_enum": [],
+      "speculative": [],
+      "online": [
+        "Test subject"
+      ]
+    }
+  },
+  "1866e5dd121208a244885602f8af061e": {
+    "base": "test topic",
+    "intent": "intervention",
+    "zh": [],
+    "en": [
+      "test topic"
+    ],
+    "per_source": {
+      "ctgov": {
+        "lang": "en",
+        "keywords": [
+          "test topic"
+        ],
+        "note": "精确匹配 → 类别/靶点族枚举具体药名；裸类别易漏"
+      },
+      "who": {
+        "lang": "en",
+        "keywords": [
+          "test topic"
+        ],
+        "note": "同 CT.gov；结构化须填具体药名"
+      },
+      "cde": {
+        "lang": "zh",
+        "keywords": [],
+        "note": "子串匹配，多词兜底"
+      },
+      "chictr": {
+        "lang": "zh",
+        "keywords": [],
+        "note": "子串匹配，多词兜底"
+      }
+    },
+    "risks": [
+      "未识别为药物类别，按疾病/干预词直接中英互译检索"
+    ],
+    "confidence": {
+      "term_map": [
+        "test topic"
+      ],
+      "alias": [],
+      "class_enum": [],
+      "speculative": []
+    }
+  },
+  "5e5936b9863e093d5327cbbbed0d6855": {
+    "base": "SGLT2 抑制剂在慢性肾脏病（CKD）中的肾保护与心血管获益",
+    "intent": "intervention",
+    "zh": [
+      "SGLT2 抑制剂在慢性肾脏病（CKD）中的肾保护与心血管获益"
+    ],
+    "en": [
+      "Kidney Protection and Cardiovascular Benefits of SGLT2 Inhibitors in Chronic Kidney Disease (CKD)"
+    ],
+    "per_source": {
+      "ctgov": {
+        "lang": "en",
+        "keywords": [
+          "Kidney Protection and Cardiovascular Benefits of SGLT2 Inhibitors in Chronic Kidney Disease (CKD)"
+        ],
+        "note": "精确匹配 → 类别/靶点族枚举具体药名；裸类别易漏"
+      },
+      "who": {
+        "lang": "en",
+        "keywords": [
+          "Kidney Protection and Cardiovascular Benefits of SGLT2 Inhibitors in Chronic Kidney Disease (CKD)"
+        ],
+        "note": "同 CT.gov；结构化须填具体药名"
+      },
+      "cde": {
+        "lang": "zh",
+        "keywords": [
+          "SGLT2 抑制剂在慢性肾脏病（CKD）中的肾保护与心血管获益"
+        ],
+        "note": "子串匹配，多词兜底"
+      },
+      "chictr": {
+        "lang": "zh",
+        "keywords": [
+          "SGLT2 抑制剂在慢性肾脏病（CKD）中的肾保护与心血管获益"
+        ],
+        "note": "子串匹配，多词兜底"
+      }
+    },
+    "risks": [
+      "未识别为药物类别，按疾病/干预词直接中英互译检索",
+      "英文词来自在线翻译（'Kidney Protection and Cardiovascular Benefits of SGLT2 Inhibitors in Chronic Kidney Disease (CKD)'），未经人工验证，建议抽查"
+    ],
+    "confidence": {
+      "term_map": [
+        "SGLT2 抑制剂在慢性肾脏病（CKD）中的肾保护与心血管获益"
+      ],
+      "alias": [],
+      "class_enum": [],
+      "speculative": [],
+      "online": [
+        "Kidney Protection and Cardiovascular Benefits of SGLT2 Inhibitors in Chronic Kidney Disease (CKD)"
+      ]
+    }
+  },
+  "a75df5753afe6550444c52f7550dbab4": {
+    "base": "是的发放",
+    "intent": "intervention",
+    "zh": [
+      "是的发放"
+    ],
+    "en": [
+      "Yes, distribute"
+    ],
+    "per_source": {
+      "ctgov": {
+        "lang": "en",
+        "keywords": [
+          "Yes, distribute"
+        ],
+        "note": "精确匹配 → 类别/靶点族枚举具体药名；裸类别易漏"
+      },
+      "who": {
+        "lang": "en",
+        "keywords": [
+          "Yes, distribute"
+        ],
+        "note": "同 CT.gov；结构化须填具体药名"
+      },
+      "cde": {
+        "lang": "zh",
+        "keywords": [
+          "是的发放"
+        ],
+        "note": "子串匹配，多词兜底"
+      },
+      "chictr": {
+        "lang": "zh",
+        "keywords": [
+          "是的发放"
+        ],
+        "note": "子串匹配，多词兜底"
+      }
+    },
+    "risks": [
+      "未识别为药物类别，按疾病/干预词直接中英互译检索",
+      "英文词来自在线翻译（'Yes, distribute'），未经人工验证，建议抽查"
+    ],
+    "confidence": {
+      "term_map": [
+        "是的发放"
+      ],
+      "alias": [],
+      "class_enum": [],
+      "speculative": [],
+      "online": [
+        "Yes, distribute"
+      ]
+    }
   }
 }

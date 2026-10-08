@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+# §16.9 exempt: shared infrastructure (publish_inject), translation API must stay local.
 """
 kw_localize.py -- search-keyword language localization for the ct- clinical-trial
 library (shared standard; lives in ct-base/scripts and is consumed by ct-registry,

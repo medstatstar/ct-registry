@@ -6,7 +6,10 @@ i18n.py -- bilingual (EN/ZH) localization for the ct- skill library (shared base
 Provides:
   - is_chinese_os(): detect if the OS locale is Chinese (system-level; drives local UI prompts)
   - t(key, **kwargs): translate a message key to the current locale
-  - set_lang(locale): manually override the locale (for testing)
+  - set_lang(locale): manually override the locale (process scope, for testing)
+  - set_lang_session(locale): persist language for the current conversation (writes data/.lang_session)
+  - set_lang_permanent(locale): persist language across sessions (writes config.json `language`)
+  - _current_lang(): resolve 'zh'/'en' via chain: process override → session → config.json → OS locale
   - detect_text_language(text): content-level detection (zh/en/None) by INPUT TEXT, NOT OS locale
   - resolve_user_language(query, override): build the coze `user_language` backup param (3-tier priority)
 
@@ -95,9 +98,99 @@ def is_chinese_os():
     return False
 
 
+# ═══════════════════════════════════════════════════════════════
+# Language persistence / 语言持久化（session / permanent 两层）
+# ═══════════════════════════════════════════════════════════════
+#
+# 解析链（最高 → 最低），由 _current_lang() 实现，亦见 scripts/switch_lang.py：
+#   process override (set_lang) → session file (data/.lang_session)
+#       → config.json `language` (set_lang_permanent) → OS locale
+# 注：config.json 仅由用户经 CLI（switch_lang.py --permanent）触发、本模块执行读取；
+# agent 不得直接改写 config.json（见 AGENTS.md 红线）。
+
+_SKILL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_SESSION_FILE = os.path.join(_SKILL_ROOT, "data", ".lang_session")
+_CONFIG_PATH = os.path.join(_SKILL_ROOT, "config.json")
+
+
+def _normalize_lang_code(locale):
+    """Map switch_lang.py input (zh-CN/en/...) → internal 'zh'/'en'."""
+    return "zh" if str(locale).lower().startswith("zh") else "en"
+
+
+def _read_session_lang():
+    """Read session-scope language from data/.lang_session (this conversation)."""
+    try:
+        with open(_SESSION_FILE, encoding="utf-8") as _f:
+            val = _f.read().strip()
+        return val if val in ("zh", "en") else None
+    except OSError:
+        return None
+
+
+def _read_config_lang():
+    """Read persistent language from config.json `language` (cross-session)."""
+    try:
+        with open(_CONFIG_PATH, encoding="utf-8") as _f:
+            data = json.load(_f)
+        val = data.get("language")
+        return val if val in ("zh", "en") else None
+    except (OSError, ValueError):
+        return None
+
+
 def _current_lang():
-    """Return 'zh' or 'en'."""
+    """Return 'zh' or 'en' via resolution chain:
+    process override → session file → config.json `language` → OS locale.
+    """
+    if _OVERRIDE_LANG is not None:
+        return "zh" if _OVERRIDE_LANG == "zh" else "en"
+    s = _read_session_lang()
+    if s:
+        return s
+    c = _read_config_lang()
+    if c:
+        return c
     return "zh" if is_chinese_os() else "en"
+
+
+def set_lang_session(locale):
+    """Persist language for the current conversation only (session scope).
+
+    Writes `data/.lang_session`; pass None to clear. Does not touch the
+    process override (_OVERRIDE_LANG) — that stays the highest-priority layer.
+    """
+    try:
+        if locale is None:
+            if os.path.exists(_SESSION_FILE):
+                os.remove(_SESSION_FILE)
+            return
+        norm = _normalize_lang_code(locale)
+        os.makedirs(os.path.dirname(_SESSION_FILE), exist_ok=True)
+        with open(_SESSION_FILE, "w", encoding="utf-8") as _f:
+            _f.write(norm)
+    except OSError:
+        pass
+
+
+def set_lang_permanent(locale):
+    """Persist language across sessions by writing config.json `language`.
+
+    Invoked by the user via `scripts/switch_lang.py --permanent`; this module
+    only performs the file write (does not hand-edit config.json elsewhere).
+    """
+    norm = _normalize_lang_code(locale)
+    try:
+        data = {}
+        if os.path.exists(_CONFIG_PATH):
+            with open(_CONFIG_PATH, encoding="utf-8") as _f:
+                data = json.load(_f)
+        data["language"] = norm
+        with open(_CONFIG_PATH, "w", encoding="utf-8") as _f:
+            json.dump(data, _f, ensure_ascii=False, indent=2)
+            _f.write("\n")
+    except (OSError, ValueError):
+        pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════

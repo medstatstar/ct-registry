@@ -3,10 +3,10 @@ slug: ct-registry
 displayName: Clinical Trial Registry Search / 临床试验注册检索专家
 name: ct-registry
 cn_name: 临床试验注册检索专家
-version: 0.10.0
+version: 0.13.0
 invocable: true
 required_commands: [python]
-summary: "跨源检索全球临床试验注册库（ClinicalTrials.gov、CDE/ChiCTR/ISRCTN/DRKS/WHO ICTRP、PubChem），归一化聚合分期/状态/申办方/时间线/竞品格局，产出 JSON / Markdown，用于立项查重、对照设计与竞品格局分析。"
+summary: "跨源检索全球临床试验注册库（ClinicalTrials.gov、CDE/ChiCTR/ISRCTN/DRKS/WHO ICTRP、PubChem），归一化聚合分期/状态/申办方/时间线/竞品格局，产出 JSON / Markdown，用于立项查重、对照设计与竞品格局分析。可选集成 pytrials 批量拉取 CT.gov 字段。"
 license: MIT
 description: "Cross-source search of global clinical-trial registries (ClinicalTrials.gov, CDE/ChiCTR/ISRCTN/DRKS/WHO ICTRP, PubChem), normalizes and aggregates phase/status/sponsor/timeline/competitor landscape into JSON/Markdown for trial planning, de-duplication, control-design benchmarking, and competitive intelligence. / 跨源检索全球临床试验注册库（ClinicalTrials.gov、CDE/ChiCTR/ISRCTN/DRKS/WHO ICTRP、PubChem），归一化聚合分期/状态/申办方/时间线/竞品格局，产出 JSON / Markdown，用于立项查重、对照设计与竞品格局分析。"
 triggers:
@@ -41,6 +41,27 @@ The SKILL.md body, `references/*.md`, and `AGENTS.md` are English-only and agent
 
 # Clinical Trial Registry Search
 
+## Published Application
+
+| Item | Value |
+|---|---|
+| Share link | `https://ct-registry.app.workbuddy.host/` |
+| appId | `wbapp_39NhpDKvmNZ4AjTmsODgqH` |
+| domainPrefix | `ct-registry` |
+| Deploy metadata | `workbench/app.config.json` |
+| Deployed as | http-service (`python app.py`, entry bootstraps `workbench/server.py`) |
+| startCmd | `python app.py` |
+| publishDir | `workbench/publish-dist` |
+| Payload | `workbench/publish-dist/` (built by `workbench/publish-kit/build_publish.py`: `app.py` + `adapters/` + `scripts/` + `references/` + `workbench/`) |
+| Publish infra | `workbench/publish-kit/` (`.wbapp_*.genie` marker + `install_genie.py` + `build_publish.py`) |
+
+> **Re-publish rule (ct-base §13.5 方案 B)**: always overwrite with the existing `appId` — the link
+> must stay `https://ct-registry.app.workbuddy.host/`. Never `createNewApp`. Before deploy:
+> 1. `python workbench/publish-kit/build_publish.py` — rebuild `workbench/publish-dist/` from the skill tree (whitelist + prune, no bulk delete).
+> 2. `python workbench/publish-kit/install_genie.py` — install the `.wbapp_*.genie` marker + `applications.yaml` into the **current workspace root** so `workbuddy_sites_deploy` can claim the appId (the marker's `localDir` is re-pinned to this machine's `publish-dist` on every run).
+> 3. Deploy with the existing `appId` (overwrite). After deploy, assert the returned `shareLink` equals the expected URL (§13.5 dirty-binding red line).
+> Last republished 2026-09-26 (feedback two-stage fix); scheme B publish infrastructure migrated 2026-09-27.
+
 > Safe by default: preview, not execute.
 
 ## Purpose
@@ -71,6 +92,13 @@ Search global clinical-trial registries in one pass, normalize heterogeneous rec
 | ISRCTN | Tier 2 (ext-svc) | Public API dead → unified Coze endpoint (`--source isrctn`) | Bearer (same token) |
 | DRKS | Tier 2 (ext-svc) | JS/redirect-only → unified Coze endpoint (`--source drks`) | Bearer (same token) |
 
+## External Open-Source Integrations (v0.13.0 · 外部开源资产引用)
+
+| Tool | Source | Purpose | Integration |
+|---|---|---|---|
+| **pytrials** | `pip install pytrials` | CT.gov 批量检索客户端：`ClinicalTrials().get_study_fields()` 批量拉取字段，适配不同端点返回结构 | 可选 API 客户端，与现有 CT.gov v2 REST API 路径并列 |
+| **Docling** | `pip install docling` | 法规文档结构化解析：`DocumentConverter().convert('protocol.pdf')` 输出带层级结构的 Markdown/JSON，保住表格结构和章节层级 | PDF 解析增强层，供 ct-protocol / ct-literature 共用 |
+
 > WHO ICTRP is the meta-aggregator: when `--with-ictrp` is set it is PRIMARY and the national registries it covers (CT.gov, EU-CTR, ISRCTN, DRKS, ChiCTR) become FALLBACK-ONLY (skipped on WHO success). **CDE is ALWAYS independent** (`--with-cde` never skipped) because WHO's English-title matching misses Chinese trials.
 
 ## Features
@@ -81,6 +109,7 @@ Search global clinical-trial registries in one pass, normalize heterogeneous rec
 - Drug → target mapping (PubChem) → mechanism & competitor target comparison.
 - Structured output → JSON / Markdown / optional PNG; chained to `ct-pipeline` and `ct-protocol`.
 - **Status track / diff (P0-A, local-only):** `--track` writes normalized results to `registry_snapshot.json`; `--diff <snapshotA> <snapshotB>` compares two `normalized.json` by NCT set and outputs `status_delta` (added / removed / status-changed / synonym-spelling-changed). Diff uses `STATUS_EIV` synonym normalization (RECRUITING≈ACTIVE_NOT_RECRUITING≈ONGOING in the same bucket, no false positives). Zero network.
+- **pytrials 增强模式 (v0.13.0, opt-in):** 使用 pytrials 作为官方 API 客户端批量拉取 CT.gov 字段，新增：① 适应症在研试验分布热力图；② 同适应症终点设计对比；③ 目标中心历史项目检索。与现有 Tier 1 直连模式互补，pytrials 提供更友好的 Python 封装。
 - **Tier-2 graceful fallback (P0-B, network only with --run):** WHO timeout/error auto-falls back to CDE + ClinicalTrials.gov for the report and sets `who_status=failed` (not hidden); CDE returning 0 records triggers one auto-retry (`--cde-retry` default 1, rate-limited by `--cde-retry-delay` default 2s); if still 0, marks `zero_hit_unverified`; all fallback paths disclose data flow in `report.md` (also writes `run_status.json`).
 - **WHO Chinese-English keyword auto-translation (P0-C, 2026-09-07):** WHO ICTRP endpoint only accepts English (Chinese keywords reliably return 0; English hits normally). For any `source=who` search (including the ChiCTR→WHO fallback path where the keyword is Chinese), keyword / multi_keywords are auto-translated to English: curated term_map (`references/term_map.json`, bidirectional authoritative) first; dictionary-miss long-tail terms fall back to online translation (`kw_localize.online_translate`, MyMemory keyless); envelope labels `source=term_map/online` truthfully. Disable with `--no-kw-localize`. ⚠️ Online translation is unreliable for medical terms (tested `光生物调节`→`Photobioregulation`, WHO hit 0; correct term `photobiomodulation` hit 974) — **new domain terms MUST enter term_map (ct-base single source), do not rely on online fallback**.
 - **ChiCTR WAF pure-Python crack (server-side node, 2026-09-07):** ChiCTR's Alibaba Cloud WAF `acw_sc__v2` can be cracked deterministically — challenge page inlines `var arg1='<40 hex>'`, algorithm = 40-bit position permutation table + fixed XOR key, solvable in pure Python (no Node/Playwright needed). Coze-side `chictr_search_node` rewritten to **HTTP-first** (`searchproj.html?title=<kw>&page=N` new param; old `searchContent=` is dead), Playwright as fallback only. ⚠️ This change is in Coze server-side source — **must be re-packaged and deployed to Coze console to take effect**; local `--source chictr` goes through the unified endpoint and auto-benefits from the node update.
@@ -119,23 +148,7 @@ Execute in **forced order** (scope → translate → search). Full three-step pr
 2. **Keywords** — translate per source (English for CT.gov/WHO/PubChem; CDE needs Chinese, strip "类" suffix, e.g. use `drugs_name=列汀` not `DPP-4抑制剂`).
 3. **Execute** — direct sources free & unmetered; external-workflow sources counted once per `demand_id` (currently free, daily cap). Then `normalize → aggregate → report` (Excel final artifact; PDFs never auto-downloaded).
 
-> **⏱️ Retrieval time & data-volume guide**
->
-> - A search typically takes **10 seconds ~ 3 minutes**; large result sets (broad keywords, deep pagination) can run up to **5 minutes**.
-> - If a search exceeds 5 minutes without finishing, the system **returns the partial results already retrieved** (instead of erroring) and marks the output with `is_timeout: true`.
-> - You may trade off wait-time vs. completeness: wait for full results, or accept a partial set for a quick preview.
->
-> **📊 How many records fit in ~5 minutes?**
->
-> Depends on query breadth; empirical ranges:
->
-> | Keyword type | Typical hit count | Fully retrievable in 5 min? | Empirical throughput |
-> |---|---|---|---|
-> | Narrow (e.g. `osimertinib`) | 20-200 | ✅ easily | WHO ~100-150 pages/min, CDE ~200-300 pages/min |
-> | Medium (e.g. `diabetes`) | 5,000-50,000 | ❌ partial only | 5 min ≈ 1,000-1,500 records |
-> | Broad (e.g. `cancer`) | 100,000+ | ❌ tiny fraction | first page ~30s, ~2-3s/page (WHO) |
->
-> - **If results are incomplete**: ① accept the partial set (sufficient for trend analysis); ② narrow the query (add intervention / sponsor / country filters); ③ split into multiple searches (by dimension).
+> **⏱️ Retrieval time & data-volume guide** → **`docs/retrieval_guide.md`** (typical 10s–5min; partial-result-on-timeout; empirical record-throughput by keyword breadth).
 
 ## Errors
 
@@ -177,46 +190,8 @@ See `references/units.md` for the atomic-task unit index.
 
 ## Bug Reporting (ct-base §20.3, adapter: `adapters/bug_report.py`)
 
-- **Trigger:** two paths — (A) **explicit user request** ("report a bug" / "反馈问题" / "提交错误报告"): go straight to two-stage confirmation, no strong signal needed, unlimited per session; (B) **strong signal** (CLI non-zero exit / engine or compute error / user explicitly questions the result) **and** the same operation was retried ≥1 → at most 1 unsolicited proposal/session. Weak signal (just repeated tuning) never triggers.
-- **Two-stage confirmation (2026-08-21, from three-stage):** ① propose-with-preview — show the bilingual `confirm_prompt` **together with** the full report (`render_report_text`, state "sanitized, no input data", invite a problem description; if the user adds one, re-render and re-show before consent) → ② on explicit consent, `send_to_endpoint` (auto action=report, endpoint `https://ct-bugreport.coze.site/run`, token = embedded §5 public credential). If the user declines, never re-propose this session.
-- **Post-send history receipt (2026-08-22):** after a successful send, the endpoint returns `history` (last submission for the same `query_origin`, or `""`). Compose the reply from `confirm_thanks(locale)` + `build_followup(history, locale)` — bilingual, auto-switched by `locale`: empty `history` → end; `history.resultstr == "done"` → also show the fix note from `history.memo`; otherwise show "not yet fixed". All user-facing strings are bilingual via `_MSGS` and `_current_locale()` auto-detection.
-- **Sanitization is hard:** the report carries only the 11-key whitelist (skill / version / error_type / error_code / engine_status / description / locale / query_origin / session_hash / attempts / test) — never raw data or subject records. `description` is the single free-text field for debugging, **user-reviewed**: write the symptom / reproduction / expected vs actual / algorithm or function used / error message; values and study design are OK. Hard boundary: no identifiable person/institution/subject info. The user reviews it in stage ① before consent; empty description omits the key. If the session had **no** cloud call, `save_local_report()` writes a local md + author email (data never leaves the machine).
-- **Client-only:** this adapter sends `report` only. Governance actions (get/update/download/delete — pull pending, mark done, download all, clean up) are reserved for the `ct-update` skill (author side); never call them from here.
-
-Invoke: `python adapters/bug_report.py --error-type <t> --description "<free text>" [--send]` (add `--send` only after the user confirms).
+Trigger (explicit request → two-stage confirmation; strong signal + retry ≥1 → ≤1 unsolicited proposal/session), two-stage confirmation, post-send history receipt, 11-key sanitization whitelist, client-only scope → **`docs/bug_reporting.md`**. Invoke: `python adapters/bug_report.py --error-type <t> --description "<free text>" [--send]` (add `--send` only after the user confirms).
 
 ## Publishing (ct-base §16)
 
-Shared assets (`i18n.py`, `kw_localize.py`, `keyword_breadth.py`, `excel_style.py`,
-`drug_name_resolver.py`, `source_guard.py`, `r_libs.py`, `office_to_md.py`, `merge_spec.py`,
-and the JSON lexicons/maps) are **single-source in `ct-base`** (§16.8). `ct-registry` only
-vendors synced copies; never edit a shared file locally and ship it — publish will silently
-overwrite local edits with the `ct-base` version, losing your change. Fix in `ct-base` first,
-then sync down.
-
-**Mandatory pre-publish gate (run from the dev workspace where `ct-base` is a sibling):**
-
-```bash
-python scripts/publish_preflight.py            # resolves ct-base as ../ct-base
-# or explicit:
-python scripts/publish_preflight.py --base-dir ../ct-base
-```
-
-`publish_preflight.py` runs, in order:
-1. `shared_sync_check.py` — blocks (exit 1) on any JSON or **Python** shared-module drift
-   vs `ct-base` (§16.8 invariant; Python modules added 2026-08-27 — previously only JSON was
-   checked, so `.py` forks went undetected).
-2. `publish_secret_scan.py` — blocks on committed secrets / tokens.
-3. `clawhub_security_audit.py --warn-only` — informational ClawHub term-audit (network; never blocks).
-4. `publish_inject.py --dry-run` — previews which `ct-base` assets would be injected.
-
-Only when `publish_preflight.py` exits 0 may you proceed:
-
-```bash
-python ../ct-base/scripts/publish_inject.py .          # inject shared assets (makes package self-contained)
-# ... package & publish to GitHub → SkillHub → ClawHub (ClawHub: no --version) ...
-python ../ct-base/scripts/publish_inject.py . --clean  # remove injected copies (auto-generated artifacts)
-```
-
-The `scripts/publish_preflight.py` orchestrator is **dev-only** (references the `ct-base`
-sibling) and is excluded from the published package via `.clawhubignore`.
+Shared assets are single-source in `ct-base` (§16.8) — never edit a shared file locally and ship it. Mandatory pre-publish gate `scripts/publish_preflight.py` (shared-sync check → secret scan → ClawHub audit → inject dry-run) + `publish_inject.py` self-contained packaging → GitHub → SkillHub → ClawHub. Full procedure → **`docs/publishing.md`**.

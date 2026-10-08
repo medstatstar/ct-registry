@@ -245,6 +245,33 @@ def _compute_query_origin():
     return "sha256:" + hashlib.sha256(socket.gethostname().encode("utf-8")).hexdigest()
 
 
+# ── 入口标识 entry_point（ct-base coze_io_contract §1.3 / §2.3 · 2026-10-07）─────
+# 区分「调用来源」：技能本身（"skill"）vs 工作台 Web 应用（"workbench"）vs 未来
+# 第三方 API（"api"）。透传写入飞书**独立列** entry_point，供后台按来源直切筛选。
+#
+# 与 query_origin 的区别（🔴 不得混用）：query_origin 按**机器**（硬件 ID / 主机名
+# 哈希），同一台机器上 skill / workbench 算出的哈希逐字节相同 → 无法区分界面来源，
+# 故须独立字段（§1.3）。
+_ENTRY_POINT = "skill"
+_ENTRY_POINT_WHITELIST = frozenset({"skill", "workbench", "api"})
+
+
+def set_entry_point(value):
+    """覆盖进程级入口标识（工作台进程启动期调用以标记 workbench）。
+
+    agent / 技能进程**不import** 工作台模块 → 两进程全局值天然隔离、无污染。
+    空值 / 空白 / 非法值一律回退 "skill"，绝不写出 None 或脏值（§1.3 白名单校验）。
+    """
+    global _ENTRY_POINT
+    v = (value or "").strip() if isinstance(value, str) else ""
+    _ENTRY_POINT = v if v in _ENTRY_POINT_WHITELIST else "skill"
+
+
+def entry_point():
+    """当前进程级入口标识（永不为 None / 空串）。"""
+    return _ENTRY_POINT or "skill"
+
+
 def _skill_version(fallback="0.9.3"):
     """ct-base coze_io_contract §1.2：顶层信封字段 skill_version。
 
@@ -264,14 +291,17 @@ def _skill_version(fallback="0.9.3"):
 
 
 def _attach_coze_contract(payload, args):
-    """ct-base coze_io_contract §1.1 / §1.2：在出站 payload 注入统一信封字段。
+    """ct-base coze_io_contract §1.1 / §1.2 / §1.3：在出站 payload 注入统一信封字段。
 
     - skill_version：顶层（与 query_origin 同级），读 SKILL.md version:
     - user_language：params 子对象，由 resolve_user_language 三级判定（按用户输入文本）
+    - entry_point（§1.3/§2.3，2026-10-07）：顶层，写入飞书独立列 entry_point
     幂等：重复调用不重复嵌套；不影响既有检索字段。
     """
     if "skill_version" not in payload:
         payload["skill_version"] = _skill_version()
+    if "entry_point" not in payload:
+        payload["entry_point"] = entry_point()
     q = (args.q or args.who_title or args.who_condition
          or args.who_sponsor or args.who_intervention or "")
     params = payload.get("params")
