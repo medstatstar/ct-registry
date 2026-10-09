@@ -6,17 +6,24 @@
   <img src="assets/icon.svg" width="240" height="240" alt="ct-registry 图标"/>
 </div>
 
+> **不安装也能用：** 如果你不想安装，只想快速使用本技能的基础功能，也可直接访问ct系列技能的总入口网页 **https://ct.medstatstar.com** 使用。
+
 > 跨源检索全球临床试验注册库（ClinicalTrials.gov、中国 CDE、WHO ICTRP、EU-CTR、ChiCTR、ISRCTN、DRKS、PubChem），归一化并聚合为一张可执行的格局图——用于立项查重、对照设计对标与竞品格局分析。B 档：普通数据输入 + 对外检索，可快速推广技能。
 
-## 适用人群
+---
 
-`ct-*` 临床试验技能家族专用于解决临床试验全生命周期的各类需求，主要面向三类人群：
+## 两种使用入口
 
-- **各制药企业的临床试验从业者** —— 申办方、CRO，以及医学 / 统计 / 注册等角色；
-- **在医疗机构中设计、管理临床试验项目，或参与临床试验研究实务的医护人员**；
-- **希望系统学习临床试验知识的医学专业学生**。
+| 入口 | 适合 | 说明 |
+|---|---|---|
+| **① 对话式** | 模糊需求、复杂路由、细节追问 | 在 WorkBuddy 里直接说人话，助手自动判断源/关键词/模式 |
+| **② 命令行** | 开发者、批量、脚本化、链式下游 | 直接调 `scripts/ct_registry.py`，完整参数见 `references/cli_reference.md` |
 
-## 如何在对话中使用（How to Use）
+下面先讲**对话式入口**，再讲命令行。
+
+---
+
+## 入口一 · 在对话中直接描述需求
 
 直接用自然语言描述你的需求即可。助手会自动判断要查哪些注册库、各源用什么关键词（中英文自动互译）、用哪种检索模式——你无需自己选参数。以下为由简到繁的真实示例。
 
@@ -98,11 +105,27 @@
 **如何触发真实计算：**
 > 安全预览展示范围（WHO + CDE = 两个端点）；说"请直接计算"执行。按一次需求计入共享配额。
 
+---
+
+## 入口二 · 命令行（开发者 / 进阶)
+
+> ⚠️ 含 `--run` 的命令会执行**真实联网检索**（公开查询词出域到对应端点）。省略 `--run` 即为默认**不联网计划**，只打印打算发出的调用。
+
+一站式编排（CT.gov + CDE 并入同一格局，非交互必须 `--no-expand` 旁路关键词确认门）：
+
+```bash
+python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-cde --no-expand --out-dir ./out --run
+```
+
+完整 CLI 配方、WHO/CDE 高级字段清单、详情/文档富集、资源用量策略见 `references/cli_reference.md`。
+
+---
+
 ## 能力一览 —— 场景
 
-| 能力 | 检索源 | 试试这样说 |
+| 能力 | 检索源 | 试试这样说 / 这样做 |
 |---|---|---|
-| 按疾病 / 干预 / 申办方检索 | CT.gov（直连）；CDE / ChiCTR（粘贴或工作流） | "查辉瑞 2022 年以来的三期肿瘤试验" |
+| 按疾病 / 干预 / 申办方检索 | CT.gov（直连）；CDE / ChiCTR（统一端点） | "查辉瑞 2022 年以来的三期肿瘤试验" |
 | 跨注册库统一归一化 | 全部源 | "把 CT.gov 和 CDE 的 NSCLC 试验合并成一张表" |
 | 聚合分析：分期 / 状态 / 申办方 / 时间线 / 竞品格局 | 全部源 | "给出奥希替尼在 NSCLC 的竞品格局" |
 | 中国 CDE 高级检索与多关键词检索 | 中国 CDE（统一端点） | "CDE：沙坦 + 进行中，化学药物，2023 年起" |
@@ -110,6 +133,7 @@
 | 药物 → 靶点 / 属性映射 | PubChem（直连） | "用 PubChem 把奥希替尼映射到靶点" |
 | 结构化详情（申办方 / 分期 / 终点） | CDE detail（65 字段）、EU-CTR 文档 | "拉这些 CDE 登记号的完整详情" |
 | 结构化输出：JSON / Markdown / PNG / Excel | — | "把格局导出成 Excel 工作簿" |
+| 快照追踪 / 状态变更提醒 | 本地 `--track` / `--diff` | "跟踪这批试验的状态变化" |
 | 链式下游分析 | → `ct-pipeline` / `ct-protocol` | "把归一化结果喂给 ct-pipeline 做情报" |
 
 ## 数据源与状态
@@ -121,12 +145,12 @@
 | ClinicalTrials.gov v2 | 直连（官方 REST API，无需 token） | 美国 + 全球主库；权威字段最全 | ✅ 正常 | — |
 | PubChem (PUG-REST) | 直连（无需 token） | 药物 → CID / 属性 / 靶点映射 | ✅ 正常 | — |
 | EU-CTR / EudraCT 旧库 | 直连（纯 HTTP 解析，无浏览器） | 欧盟 2022 前存量试验 | ✅ 正常（单页 ~13s，默认收敛 3 页） | 站点不通 → WHO 线路筛 EUCTR 记录 |
-| CTIS（欧盟 2022+ 新试验） | 统一 Coze 端点 `source=ctis` | 欧盟新试验；**非 WHO 一级镜像，无 WHO 兜底** | ✅ 正常（单页 ~9s，默认收敛 2 页） | 站点不通 → 无 WHO 兜底，返回明确提示 |
-| 中国 CDE (`chinadrugtrials`) | 统一 Coze 端点 | 中国药物试验（始终独立检索，WHO 英文匹配会漏中文试验） | ✅ 正常 | — |
-| WHO ICTRP (`who`) | 统一 Coze 端点 | **合并检索源**：一次调用镜像 14+ 一级注册库 | ✅ 正常（量大，受 5 分钟网关约束） | —（本身就是兜底源） |
-| ChiCTR (`chictr`) | 统一 Coze 端点 | 中国学术试验（无公开 API） | ⚠️ 自 2026-09-06 起后端节点持续返回空（疑似故障） | 0 条 + 对照探针判定故障 → 自动切 WHO 线路筛 ChiCTR 记录 |
-| ISRCTN (`isrctn`) | 统一 Coze 端点（**官方 XML API**，绕过反爬验证挑战） | 英国注册库 | ✅ 正常（2026-09-08 由网页爬取改为官方 XML API，修复 0 条误判） | 站点异常/改版 → 自动切 WHO 线路筛 ISRCTN 记录 |
-| DRKS (`drks`) | 统一 Coze 端点 | 德国注册库 | ⚠️ 旧搜索入口已迁移至 BfArM（JSF 新站，旧形态不可解析） | 迁移预检短路 + 自动切 WHO 线路筛 DRKS 记录 |
+| CTIS（欧盟 2022+ 新试验） | 统一端点 `source=ctis` | 欧盟新试验；**非 WHO 一级镜像，无 WHO 兜底** | ✅ 正常（单页 ~9s，默认收敛 2 页） | 站点不通 → 无 WHO 兜底，返回明确提示 |
+| 中国 CDE (`chinadrugtrials`) | 统一端点 | 中国药物试验（始终独立检索，WHO 英文匹配会漏中文试验） | ✅ 正常 | — |
+| WHO ICTRP (`who`) | 统一端点 | **合并检索源**：一次调用镜像 14+ 一级注册库 | ✅ 正常（量大，受 5 分钟网关约束） | —（本身就是兜底源） |
+| ChiCTR (`chictr`) | 统一端点 | 中国学术试验（无公开 API） | ⚠️ 自 2026-09-06 起后端节点持续返回空（疑似故障） | 0 条 + 对照探针判定故障 → 自动切 WHO 线路筛 ChiCTR 记录 |
+| ISRCTN (`isrctn`) | 统一端点（**官方 XML API**，绕过反爬验证挑战） | 英国注册库 | ✅ 正常（2026-09-08 由网页爬取改为官方 XML API，修复 0 条误判） | 站点异常/改版 → 自动切 WHO 线路筛 ISRCTN 记录 |
+| DRKS (`drks`) | 统一端点 | 德国注册库 | ⚠️ 旧搜索入口已迁移至 BfArM（JSF 新站，旧形态不可解析） | 迁移预检短路 + 自动切 WHO 线路筛 DRKS 记录 |
 
 ### 各来源如何配合
 
@@ -151,13 +175,16 @@
 总数会聚合为一张格局图。跨源运行既报告总条数，**也**给出分源明细（如 CT.gov 20 + CDE 2057 → 2077 条）。状态分布里 `RECRUITING` 与 `已完成/进行中` 同表呈现。
 
 **怎么真查出数？**
-默认是**安全预览**（只有计划 / 载荷）。说"请直接计算" / "run it" 才执行真实检索。
+- **对话**：默认是**安全预览**（只有计划 / 载荷），说"请直接计算" / "run it" 才执行真实检索。
+
+**必须安装技能才能用吗？**
+不必须——基础功能可直接访问 ct 系列总入口网页 **https://ct.medstatstar.com** 免安装使用；完整能力（高级字段、确认门 PDF 下载、快照追踪）请安装并调用 `ct-registry` 技能。
 
 **中文环境输出是中文吗？**
 是。脚本自动检测语言环境：中文 `zh-*` 系统下所有面向用户的提示切中文，否则英文。原始数据值（CDE 中文状态 / 适应症等）一律保真不翻译。
 
 **为什么有些行分期 / 申办方显示 `Unknown`？**
-列表检索只返回概要字段。`sponsor` 与 `phase` 仅在 CDE `detail` 模式（65 字段）或 WHO detail 才有。需要申办方 / 分期明细时请抓详情。
+列表检索只返回概要字段。`sponsor` 与 `phase` 仅在 CDE `detail` 模式（65 字段）或 WHO detail 才有。需要申办方 / 分期明细时请抓详情（对话式或 CLI）。
 
 **免费吗？有配额吗？**
 当前免费。共享第三方端点按**需求（demand）**计次（一次用户请求 = 1 次需求；其内的 WHO+CDE、关键词微调、重复检索都合并为 1）。每日上限 100 个需求；直连 Tier-1 源（CT.gov v2、EU-CTR、PubChem）与预览不计入。
@@ -181,7 +208,7 @@ A: 本技能遵循 ct-base §20.3 错误报告流程。若您怀疑结果有误�
 
 借 WHO ICTRP 做全球检索（一次调用镜像 14+ 注册库）。**耗时取决于检索面宽窄**——小结果集（≤100 条 / 窄词如 `osimertinib`）走纯 HTTP 直连通道，**数秒即回**（2026-09-08 起，无需启动浏览器）；大结果集（宽词、多字段筛选）才会由浏览器翻页取数，需 **1 到 5 分钟**。给你一个直观的预期：
 
-- **等多久**：小结果集（窄词 / ≤100 条）**数秒**即回；大结果集（宽词如 `cancer`、多字段筛选）后台需浏览器翻页，通常要 **1 到 5 分钟**才把数拿回来。技能会先给你一张"已提交、正在跑"的回执，然后自动轮询，跑完才返结果——这段时间你不用一直盯着，结果好了自然会回来。
+- **等多久**：小结果集（窄词 / ≤100 条）**数秒**即回；大结果集（宽词如 `cancer`、多字段筛选）后台需浏览器翻页，通常要 **1 到 5 分钟**才把数拿回来。
 - **为什么会贴着 5 分钟**：统一的第三方端点外侧有一道 **5 分钟硬墙**（网关上限）。像 `cancer` 这种宽词、或"全球 + 不限国家"的大检索面，处理时间可能贴着这道墙走，极少情况下会超时失败。真遇到了，技能会明明白白告诉你，而不是悄悄把数据丢了。
 - **超过 5 分钟怎么办**：如果检索量超过 5 分钟仍未能全部完成，系统会**返回已检索到的部分结果**（而非报错），并在输出中标注 `is_timeout: true`。你可以在等待时间与数据完整性之间自行取舍：要完整结果请耐心等待；要快速预览可接受部分结果。
 - **5 分钟大约对应多少条数据**：取决于检索面的宽窄，经验值如下：
@@ -197,11 +224,11 @@ A: 本技能遵循 ct-base §20.3 错误报告流程。若您怀疑结果有误�
 
 ## 安全（safe preview）
 
-**默认安全预览。** 脚本只生成并展示计划 / 载荷。网络请求**仅在你显式确认时**才执行（"请直接计算" / "run it"）。在你确认前不发任何请求、不取任何数据。
+**默认安全预览。** 对话中脚本只生成并展示计划 / 载荷。网络请求**仅在你显式确认时**才执行（"请直接计算" / "run it"）。在你确认前不发任何请求、不取任何数据。
 
 **仅公开数据——零保密输入。** 技能读取公开注册库数据；你无需提供受试者 / 方案 / CRF 数据，也绝不会传输任何保密数据。
 
-**出域披露（egress）。** 当你执行真实检索时，只有**公开查询词**（药品名、适应症、登记号）离开你的环境，发往以下公开端点：
+**出域披露（egress）。** 当你执行真实检索时，**公开查询词**（药品名、适应症、登记号）离开你的环境，同时随附**非内容请求元数据**：`query_origin`（由本机主机名 / 硬件 ID 派生的稳定 SHA-256 哈希，供端点做防滥用限流与调用归因——唯一外发的机器派生标识，不传输主机名原文），以及 `skill_version`、`entry_point`、`params.user_language`、`demand_id` 关联 ID。上述内容发往以下公开端点：
 
 - **ClinicalTrials.gov v2** —— 官方 REST API（直连，无需 token）。
 - **PubChem** —— PUG-REST（药物→CID / 属性 / 靶点；直连，无需 token）。
@@ -322,7 +349,7 @@ python scripts/export_xlsx.py --in normalized.json --out report.xlsx --title "As
 `--who-title`（+ 运算符）、`--who-condition`、`--who-intervention`（别名 `--intr`）、`--who-recruitment-status`（别名 `--status`）、`--who-sponsor`、`--who-country`、`--who-phase`（逗号分隔）、`--who-date-start` / `--who-date-end`（DD/MM/YYYY）、`--who-with-results`、`--who-secondary-id`。任一结构化字段会自动选 `mode=combined`。
 
 ### CDE 高级字段（节选 → CLI）
-`--reg-no`、`--indication`、`--case-no`、`--drugs-name`、`--drugs-type`（枚举：中药/天然药物/化学药物/生物制品）、`--appliers`、`--communities`、`--researchers`、`--agencies`、`--trial-status`（11 值枚举：进行中/尚未招募/招募中/招募完成/已完成/主动暂停/主动终止/IEC·IRB暂停/IEC·IRB终止/责令暂停/责令终止）。注意：CDE 高级界面**无期次过滤**——分期由 detail 后筛。
+`--reg-no`、`--indication`、`--case-no`、`--drugs-name`、`--drugs-type`（枚举：中药/天然药物/化学药物/生物制品）、`--appliers`、`--communities`、`--researchers`、`--agencies`、`--trial-status`（11 值枚举：进行中/尚未招募/招募中/招募完成/已完成/主动暂停/主动终止/IEC·IRB暂停/IEC·IRB终止/责令暂停/责令终止)。注意：CDE 高级界面**无期次过滤**——分期由 detail 后筛。
 
 ### 人机交互契约（两道门）
 - **Gate 1 —— 检索前简报（在任一真实联网调用之前）：** 助手打印各源关键词（中英对照）、范围、时间/状态筛选、`demand_id` 分组与配额影响，以及"免费、每日 100 个需求"提示。仅在确有选择时才追问。
@@ -332,7 +359,7 @@ python scripts/export_xlsx.py --in normalized.json --out report.xlsx --title "As
 | 错误 | 原因 | 处理 |
 |---|---|---|
 | CT.gov `URLError` | 无网络 / 代理 | 确认 clinicaltrials.gov 可达；配置代理 |
-| CDE 空白 / "access blocked" | 安全狗 WAF 拦截浏览器 | 用统一端点工作流（推荐）；或协助粘贴 → `parse_cde.py`（不出域） |
+| CDE/ChiCTR WAF "access blocked" | 安全狗 WAF 拦截浏览器 | 用统一端点工作流（推荐）；或协助粘贴 → `parse_cde.py`（不出域） |
 | WHO / CDE HTTP 401 | 缺 `Authorization: Bearer <token>` | token 内嵌于 `adapters/endpoint_token.py`（随包）；若仍 401，设 `CT_REGISTRY_COZE_TOKEN` 或传 `--token` |
 | WHO / CDE HTTP 403（罕见） | token 损坏 / 吊销 | 经环境变量 `CT_REGISTRY_COZE_TOKEN` / `--token` 重发（长期有效，403 非过期） |
 | CDE HTTP 500 `字段类型错误` | 字段写成 `{"value":x}` 或 `project_list` 写成数组 | 用纯字符串；`project_list` 须为 JSON **字符串** |
@@ -344,7 +371,7 @@ python scripts/export_xlsx.py --in normalized.json --out report.xlsx --title "As
 
 ---
 
-**版本**：v0.3.81 | **License**：MIT | **Authors**：medstatstar, phoe-zip
+**版本**：v0.13.0 | **License**：MIT | **Authors**：medstatstar, phoe-zip
 
 如有功能建议、Bug 反馈或其他意见，请直接联系作者：medstatstar@gmail.com（张文彤 / Wintone Zhang）。
 

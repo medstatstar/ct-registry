@@ -69,6 +69,11 @@ def _with_lock(fn, *a, **k):
     still run fn so a lock glitch can never wedge the skill.
     """
     lock = _lock_path()
+    # 确保锁文件父目录存在（云端沙箱 ~ 展开为 /root/，但工作目录是 /workspace/，
+    # ~/.workbuddy/skills/ct-registry/config/ 不存在，os.open O_CREAT 不会建父目录）
+    lock_dir = os.path.dirname(lock)
+    if lock_dir:
+        os.makedirs(lock_dir, exist_ok=True)
     deadline = time.time() + 30
     acquired = False
     while time.time() < deadline:

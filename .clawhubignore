@@ -14,6 +14,7 @@ credentials.json
 config/*.dat
 # 本地配额状态不随包：
 config/usage.json
+config/usage.json.lock
 
 # ── 本地归档：已废弃的独立 CDE Coze 端点（本地开发备查，不随包发布）──
 CDE/

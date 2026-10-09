@@ -6,17 +6,24 @@
   <img src="assets/icon.svg" width="240" height="240" alt="ct-registry logo"/>
 </div>
 
+> **Works without installation:** If you'd rather not install and just want to quickly use this skill's basic features, you can also visit the ct-series unified web portal **https://ct.medstatstar.com** directly.
+
 > Cross-source search of global clinical-trial registries (ClinicalTrials.gov, China CDE, WHO ICTRP, EU-CTR, ChiCTR, ISRCTN, DRKS, PubChem), normalized and aggregated into one actionable landscape — for trial planning, de-duplication, control-design benchmarking, and competitive intelligence. B-tier: ordinary input + public retrieval, quickly-adoptable.
 
-## Who This Is For
+---
 
-The `ct-*` clinical-trial skill family covers the entire clinical-trial lifecycle. It serves three groups:
+## Two Ways to Use It
 
-- **Clinical-trial practitioners at pharmaceutical companies** — sponsors, CROs, and medical / statistical / regulatory roles;
-- **Clinicians and nurses who design, manage, or run clinical-trial projects**;
-- **Medical students who want to learn clinical-trial methodology in a structured way**.
+| Entry | Best for | Notes |
+|---|---|---|
+| **① In conversation** | Vague needs, complex routing, detail follow-ups | Just speak plainly in WorkBuddy; the assistant auto-decides sources / keywords / mode |
+| **② Command line** | Developers, batch, scripting, chained downstream | Call `scripts/ct_registry.py` directly; full params in `references/cli_reference.md` |
 
-## How to Use (in conversation)
+Below we cover the conversation entry first, then the CLI.
+
+---
+
+## Entry ① · Describe your need in conversation
 
 Just describe what you need in plain language. The assistant auto-decides which registries, which keywords (it localizes CN/EN for you), and which retrieval mode — you never pick flags yourself. Below are real examples from simple to complex.
 
@@ -98,11 +105,27 @@ Just describe what you need in plain language. The assistant auto-decides which 
 **How to trigger real computation:**
 > Safe preview shows scope (WHO + CDE = two endpoints); say "run it" to execute. Counted as one demand against the shared quota.
 
+---
+
+## Entry ② · Command line (developers / advanced)
+
+> ⚠️ Commands that include `--run` perform **live network retrieval** (public query terms egress to the endpoints above). Omit `--run` for the default **no-network plan** that prints only the intended call.
+
+One-shot orchestration (CT.gov + CDE merged into the same landscape; non-interactive MUST add `--no-expand` to bypass the keyword-confirmation gate):
+
+```bash
+python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-cde --no-expand --out-dir ./out --run
+```
+
+Full CLI recipes, WHO/CDE advanced-field inventory, detail/doc enrichment, and resource-usage policy → `references/cli_reference.md`.
+
+---
+
 ## What It Can Do — Scenarios
 
-| Capability | Source(s) | Try saying |
+| Capability | Source(s) | Try saying / doing |
 |---|---|---|
-| Search by disease / intervention / sponsor | CT.gov (direct); CDE / ChiCTR (user-paste or workflow) | "Find phase 3 oncology trials by Pfizer since 2022" |
+| Search by disease / intervention / sponsor | CT.gov (direct); CDE / ChiCTR (unified endpoint) | "Find phase 3 oncology trials by Pfizer since 2022" |
 | Unified cross-registry normalization | All sources | "Merge CT.gov and CDE NSCLC trials into one table" |
 | Aggregation: phase / status / sponsor / timeline / competitor landscape | All sources | "Show the competitor landscape for osimertinib in NSCLC" |
 | China CDE advanced & multi-keyword search | China CDE (unified endpoint) | "CDE: 沙坦 + 进行中, chemical drug, since 2023" |
@@ -110,6 +133,7 @@ Just describe what you need in plain language. The assistant auto-decides which 
 | Drug → target / property mapping | PubChem (direct) | "Map osimertinib to its target via PubChem" |
 | Structured detail (sponsor / phase / endpoints) | CDE detail (65 fields), EU-CTR docs | "Pull full details for these CDE registration numbers" |
 | Structured output: JSON / Markdown / PNG / Excel | — | "Export the landscape as an Excel workbook" |
+| Snapshot tracking / status-change alerts | Local `--track` / `--diff` | "Track status changes of these trials" |
 | Chained downstream analysis | → `ct-pipeline` / `ct-protocol` | "Feed the normalized results to ct-pipeline for intel" |
 
 ## Data Sources & Status
@@ -124,8 +148,8 @@ Just describe what you need in plain language. The assistant auto-decides which 
 | CTIS (EU 2022+ trials) | Unified Coze endpoint `source=ctis` | EU new trials; **NOT a WHO primary mirror, no WHO fallback** | ✅ OK (~9s/page; default 2-page cap) | site down → no WHO fallback, returns clear message |
 | China CDE (`chinadrugtrials`) | Unified Coze endpoint | China drug trials (always searched independently; WHO English matching misses Chinese trials) | ✅ OK | — |
 | WHO ICTRP (`who`) | Unified Coze endpoint | **Merged source**: mirrors 14+ primary registries in one call | ✅ OK (large, under 5-min gateway cap) | — (it IS the fallback source) |
-| ChiCTR (`chictr`) | Unified Coze endpoint | China academic trials (no public API) | ⚠️ backend node returning empty since 2026-09-06 (suspected fault) | 0 + control-probe confirms fault → auto WHO route filters ChiCTR records |
-| ISRCTN (`isrctn`) | Unified Coze endpoint (**official XML API**, bypassing anti-bot challenge) | UK registry | ✅ OK (2026-09-08: switched from web scraping to official XML API, fixing false 0) | anomalous/redesigned → auto WHO route filters ISRCTN records |
+| ChiCTR (`chictr`) | Unified Coze endpoint (**official XML API**, bypassing anti-bot challenge) | UK registry | ✅ OK (2026-09-08: switched from web scraping to official XML API, fixing false 0) | anomalous/redesigned → auto WHO route filters ISRCTN records |
+| ISRCTN (`isrctn`) | Unified Coze endpoint | China academic trials (no public API) | ⚠️ backend node returning empty since 2026-09-06 (suspected fault) | 0 + control-probe confirms fault → auto WHO route filters ChiCTR records |
 | DRKS (`drks`) | Unified Coze endpoint | German registry | ⚠️ old search entry migrated to BfArM (JSF new site, old shape unparsable) | migration precheck short-circuits + auto WHO route filters DRKS records |
 
 ### How the sources work together
@@ -151,7 +175,10 @@ Yes. You never choose a mode or flag — the assistant auto-decides the CDE call
 Totals are aggregated into one landscape. A cross-source run reports the grand total **and** the per-source breakdown (e.g. CT.gov 20 + CDE 2057 → 2077 records). The status distribution shows both `RECRUITING` and `已完成/进行中` in the same table.
 
 **How do I actually retrieve the data?**
-By default you get a **safe preview** (the plan / payload only). Say "run it" / "请直接计算" to execute the live retrieval.
+- **In conversation**: by default you get a **safe preview** (the plan / payload only). Say "run it" / "请直接计算" to execute the live retrieval.
+
+**Do I need to install the skill?**
+No — for the basics you can visit the ct-series unified web portal **https://ct.medstatstar.com** without installing anything. For full capabilities (advanced fields, confirm-gated PDF download, snapshot tracking), install and invoke the `ct-registry` skill.
 
 **Is the output in Chinese when I'm on a Chinese system?**
 Yes. The scripts auto-detect locale: all user-facing prompts switch to Chinese on a `zh-*` locale and to English otherwise. Raw data values (CDE Chinese status / indication, etc.) are always kept verbatim — never translated.
@@ -185,7 +212,7 @@ You stay in full control: the report is shown to you **before** anything is sent
 
 When you mirror 14+ registries through WHO ICTRP in one call, **latency depends on the breadth of the query** — small result sets (≤100 records / narrow terms like `osimertinib`) go through the pure-HTTP direct channel and come back **in seconds** (since 2026-09-08, no browser needed); only large result sets (broad terms, multi-field filters) fall back to browser pagination and take **1–5 minutes**. Here's what to expect:
 
-- **How long:** small result sets (narrow terms / ≤100 records) come back **in seconds**; large result sets (broad terms like `cancer`, multi-field filters) need browser pagination and typically take **1–5 minutes**. The skill first hands you a "submitted, running" receipt, then polls automatically and delivers the result when ready — you don't have to babysit it.
+- **How long:** small result sets (narrow terms / ≤100 records) come back **in seconds**; large result sets (broad terms like `cancer`, multi-field filters) need browser pagination and typically take **1–5 minutes**.
 - **Why it can hug the 5-minute ceiling:** the unified third-party endpoint sits behind a hard **5-minute gateway cap**. The workflow uses **P4 async fire-and-forget** (`/run` returns immediately with a `run_id`, then polls `/run/status/{run_id}` with exponential backoff) to bypass this wall. Broad queries like `cancer`, or "global + no country filter", can run right up against that wall and, rarely, time out. If it does, the skill tells you explicitly instead of silently dropping data.
 - **What happens after 5 minutes:** if the retrieval volume exceeds the 5-minute cap and still isn't complete, the system **returns whatever partial results have been collected so far** (rather than erroring out), and marks the output with `is_timeout: true`. You can trade off between wait time and data completeness: wait longer for full results, or accept partial results for a quick preview.
 - **Roughly how many records in 5 minutes:** it depends on how broad the query is:
@@ -201,11 +228,11 @@ When you mirror 14+ registries through WHO ICTRP in one call, **latency depends 
 
 ## Safety (safe preview)
 
-**Safe preview by default.** Scripts only generate and display a plan / payload. Network requests run **only** when you explicitly say so ("run it" / "请直接计算"). Nothing is sent or fetched until then.
+**Safe preview by default.** Conversation scripts only generate and display a plan / payload. Network requests run **only** when you explicitly say so ("run it" / "请直接计算"). Nothing is sent or fetched until then.
 
 **Public data only — zero confidential input.** The skill reads public registry data; you never supply subject / protocol / CRF data, and none is ever transmitted.
 
-**Outbound data disclosure (egress).** When you run a live retrieval, only **public query terms** (drug name, indication, registration number) leave your environment, sent to these public endpoints:
+**Outbound data disclosure (egress).** When you run a live retrieval, **public query terms** (drug name, indication, registration number) leave your environment, together with **non-content request metadata**: `query_origin` (a stable machine-derived SHA-256 hash of the local hostname / hardware ID, used by the endpoint for abuse-limiting and call attribution — the only machine-derived identifier ever sent; the raw hostname is not transmitted), plus `skill_version`, `entry_point`, `params.user_language`, and a `demand_id` correlation id. These are sent to the following public endpoints:
 
 - **ClinicalTrials.gov v2** — official REST API (direct, no token).
 - **PubChem** — PUG-REST (drug → CID / properties / targets; direct, no token).
@@ -213,9 +240,6 @@ When you mirror 14+ registries through WHO ICTRP in one call, **latency depends 
 - **EU-CTR** — pure-HTTP HTML parse of legacy EudraCT results (direct, no token, no browser).
 - **WHO ICTRP** — unified Coze `/run` endpoint (third-party, Bearer token required); one call mirrors 14+ registries.
 - **ChiCTR / ISRCTN / DRKS** — served by the **same** unified Coze `/run` endpoint via `source=chictr|isrctn|drks` (third-party, shared token).
-- **Bug reports (optional, opt-in only):** if a likely skill defect is detected, the assistant may ask to send a **sanitized** bug report to the unified report endpoint `https://ct-bugreport.coze.site/run` (skill name/version/error type plus a problem description you review and approve — never your raw data). Nothing is sent without your confirmation; you can always decline.
-
-**First-outbound confirmation.** The first time a search sends your terms to the unified endpoint, you'll see a one-time confirmation prompt (target server + what is sent = your public search terms, no personal info). After you approve, the endpoint is whitelisted and you won't be asked again this session. This follows the ct-base §5 library-wide outbound-authorization norm. Nothing is sent until you approve or say "run it".
 
 WHO ICTRP and China CDE **share one long-lived token** on the unified endpoint. It is a PUBLIC shared credential, embedded as an XOR+base64 blob in `adapters/endpoint_token.py` (shipped with the package) so it works out-of-the-box. Resolution order: CLI(`--token`) > env(`CT_REGISTRY_COZE_TOKEN`, legacy `ICTRP_WORKFLOW_TOKEN`) > embedded blob (ct-base §5.236). No confidential data ever reaches any of these endpoints.
 
@@ -341,7 +365,7 @@ Detail fetch (≤100 items auto, >100 confirm) and PDF download are gated by exp
 | Error | Cause | Fix |
 |---|---|---|
 | CT.gov `URLError` | No network / proxy | Confirm clinicaltrials.gov reachable; set proxy |
-| CDE empty / "access blocked" | SafeDog WAF blocks browsers | Use unified endpoint workflow (preferred); or assisted paste → `parse_cde.py` (no egress) |
+| CDE/ChiCTR WAF "access blocked" | SafeDog WAF blocks browsers | Use unified endpoint workflow (preferred); or assisted paste → `parse_cde.py` (no egress) |
 | WHO / CDE HTTP 401 | Missing `Authorization: Bearer <token>` | Token is embedded in `adapters/endpoint_token.py` (shipped); if a 401 persists, set `CT_REGISTRY_COZE_TOKEN` or pass `--token` |
 | WHO / CDE HTTP 403 (rare) | Corrupted / revoked token blob | Re-issue via env `CT_REGISTRY_COZE_TOKEN` / `--token` (token is long-lived; 403 is not expiry) |
 | CDE HTTP 500 `字段类型错误` | Field sent as `{"value":x}` or `project_list` as array | Use plain strings; `project_list` must be a JSON **string** |
@@ -353,7 +377,7 @@ Detail fetch (≤100 items auto, >100 confirm) and PDF download are gated by exp
 
 ---
 
-**Version**: v0.3.81 | **License**: MIT | **Authors**: medstatstar, phoe-zip
+**Version**: v0.13.0 | **License**: MIT | **Authors**: medstatstar, phoe-zip
 
 For feature requests, bug reports, or other feedback, please contact the author directly at medstatstar@gmail.com (Wintone Zhang / 张文彤).
 
