@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.13.1 (2026-10-13) · coze 0.3.94 文献检索月份级日期窗口（ct-literature online 原生过滤）
+
+> 用户指认 `adapters/coze` 即 ct-search.coze.site 云端代码位置，要求让 online/Coze 通道原生支持月份级日期窗口（而非调用方规避）。客户端 ct-literature v1.4.3 联动。
+
+**coze 侧（`adapters/coze/`，服务端私有 §16.7 · 本地已改，待发布）**
+
+- **`src/graphs/state.py`**：三模型（`GraphInput` 入口投影 / `GlobalState` 图内传递 / `SearchNodeInput` 节点注入）**均显式声明** `lit_date_from` / `lit_date_to`（`Optional[str]`，YYYY-MM-DD）。与 FAERS/OpenFDA 的 `date_from/date_to`（YYYYMMDD）格式与语义均不同，独立命名 `lit_*` 防混用。🔴 漏声明即被 `extra='ignore'` 静默丢弃、节点恒 None——2026-10-08 FAERS 同款坑（当时只补了 GraphInput/SearchNodeInput、漏 GlobalState）。
+- **`src/graphs/nodes/literature_nodes.py`**：五个文献节点全部改为 **date 优先、year 回退、老客户端逐字不变**：
+  - `openalex_node`：`from_publication_date/to_publication_date:YYYY-MM-DD`（year 回退 Jan-1/Dec-31）
+  - `europepmc_node`：查询子句 `(FIRST_PDATE:[lo TO hi])`（沿用本地 2026-10-12 实证结论：`filter=pdates:` 被 API 静默忽略、按索引日期放回老文；`PUB_YEAR` 仅作 year 回退）
+  - `_fetch_preprints_epmc`（bioRxiv/medRxiv 共用）：同上 `FIRST_PDATE` 子句
+  - `arxiv_node`：独立 filter 参数 `submittedDate:[YYYYMMDD TO YYYYMMDD]`（不拼 search_query 的教训保持有效）
+  - `semantic_scholar_node`：`publicationDateOrYear:{date_from}:{date_to}`
+- **🔴 根因修复：`europepmc_node` `publication_date` 恒空串**——`printPublicationDate`/`dateOfPublication` 嵌在 `journalInfo` 下，顶层 `rec.get()` 永远取空。改 `firstPublicationDate`（顶层真源）优先，对齐本地 `fetch_europepmc.py` 2026-09-08 BUGFIX（该修复此前漏同步到云端，2026-10-12 在线实测复证）。
+- **`src/graphs/nodes/_version.py`**：`COZE_VERSION` 0.3.93 → **0.3.94**（升级纪律：只改本文件）。
+- **验证**：`scripts/selfcheck.py` 44/44 PASS；三模型穿透（GraphInput→GlobalState→SearchNodeInput）+ 老客户端兼容、各源原生检索式打桩捕获（OpenAlex filter / EuropePMC·bioRxiv FIRST_PDATE 子句 / arXiv submittedDate）、date 优先于 year、year 回退逐字不变，共 11 项全过（coze `.venv` 实跑）。
+
+**客户端（ct-literature v1.4.3，本仓库外）**
+
+- `fetch_coze_unified.dispatch()` payload 键 `date_from/date_to` → `lit_date_from/lit_date_to` 对齐云端契约；旧云端（未部署 0.3.94）收到新键被静默忽略不报错（向后兼容已实证）。
+
+**部署**：coze 0.3.94 需在 Coze 平台人工发布；发布前 online 通道仍依赖 ct-literature 客户端 `clip_by_date_window()` 兜底（正确性有保证，但近期文献召回受 max_results 截断限制）。
+
 ## v0.13.0 (2026-10-08) · pytrials + Docling 外部开源资产引用
 
 > 基于《临床试验Skill推荐》分析，新增 pytrials 和 Docling 两个外部开源工具集成。
