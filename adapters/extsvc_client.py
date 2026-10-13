@@ -70,18 +70,38 @@ def get_token(cli_token=None, token_env=None):
 # user approval, persists the endpoint into config.json['auto_approve_endpoints'].
 # The script NEVER mutates config.json itself.
 _SESSION_AUTHORIZED = set()
-CONFIG_JSON_PATH = os.path.expanduser(
+_HOME_CONFIG_JSON = os.path.expanduser(
     "~/.workbuddy/skills/ct-registry/config/config.json")
+
+
+def _authorized_endpoints():
+    """汇总候选配置来源的 auto_approve_endpoints（取并集）：
+    1) 应用/技能根相对路径 ``<root>/config/config.json`` —— 云端 publish-dist
+       部署布局。云沙箱 home=/root 且工作目录为 /workspace，家目录路径必然
+       缺失；发布包（build_publish.py 白名单）自带 config/config.json。
+    2) 用户家目录 ``~/.workbuddy/skills/ct-registry/config/config.json`` ——
+       本地技能开发布局（历史行为，保持不变；本地两个候选实为同一文件）。
+    2026-10-13 修复：此前只读家目录绝对路径，云端部署的 WHO ICTRP / CDE /
+    ChiCTR / ISRCTN / DRKS 出站 100% 被 AUTH-BLOCK，CT.gov 一遇网络抖动即
+    整体静默返回 0 条（exit 0 + 空报告，前端无感知）。
+    """
+    out = set()
+    for p in (os.path.join(str(_SKILL_ROOT), "config", "config.json"),
+              _HOME_CONFIG_JSON):
+        try:
+            cfg = json.loads(Path(p).read_text(encoding="utf-8"))
+            eps = cfg.get("auto_approve_endpoints") or []
+            if isinstance(eps, list):
+                out.update(str(e) for e in eps)
+        except (OSError, json.JSONDecodeError):
+            continue
+    return out
 
 
 def _check_outbound_authorization(endpoint):
     if endpoint in _SESSION_AUTHORIZED:
         return True
-    try:
-        cfg = json.loads(Path(CONFIG_JSON_PATH).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        cfg = {}
-    if endpoint in cfg.get("auto_approve_endpoints", []):
+    if endpoint in _authorized_endpoints():
         return True
     sys.stderr.write(
         f"[AUTH-BLOCK] outbound to {endpoint} requires user confirmation.\n")

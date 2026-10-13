@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.13.3 (2026-10-13) · 修复云端部署「检索不返回结果」（授权门路径 / 药名译名 / 超时与失败可见性）
+
+> 用户报障 https://ct-registry.app.workbuddy.host/ 长期检索不返回结果。实测定位四层根因：① 出站授权门只读家目录 config，云沙箱必然缺失 → WHO/CDE/ChiCTR/ISRCTN/DRKS 全灭（10-08 起云端实际只有 CT.gov 单源）；② CT.gov 直连在云沙箱间歇 TLS 握手超时（共享出口 IP 被限流），兜底又死于 ①；③ 阿西米尼不在任何词表，机翻成 "Assimini" → 0 命中且静默；④ 全源失败仍 exit 0 + 空报告，前端空态文案误导，超时口径三方不一（后端 60s / 前端 90s / 横幅 5 分钟）。
+
+- **`adapters/extsvc_client.py`（P0 结构性）**：`_check_outbound_authorization` 原只读 `~/.workbuddy/skills/ct-registry/config/config.json`（家目录绝对路径）→ 新增 `_authorized_endpoints()`：**技能/应用根 `<root>/config/config.json` 优先 + 家目录回退**，两候选 auto_approve_endpoints 取并集。本地两候选实为同一文件（行为不变）；云端 publish-dist 布局（/workspace）首次可解析。
+- **`workbench/publish-kit/build_publish.py`（P0）**：WHITELIST_DIRS 增加 `config`；`excluded()` 增加 config 文件级白名单——仅 `config.json` 随包发布（`usage.json` / `*.dat` / `kw_system_cache.json` / `config.local.json` 排除）。
+- **`references/term_map.json`（P0）**：补 `阿西米尼 → asciminib`（606 词条；原三张词表全 miss，MyMemory 机翻产出错误拼写 "Assimini"）。
+- **`workbench/server.py`（P1）**：`CTWB_TASK_TIMEOUT` 默认 **60s → 180s**（历史值把正常宽词检索误杀，前端 90s 轮询先杀）；新增 `_parse_failed_sources()`——从子进程日志提取失败信号（AUTH-BLOCK / TLS 握手超时 / 站点检索失败 / WHO 兜底失败 / TIMEOUT），经 `/api/task/<id>` 以 `failedSources` 透出；`/api/localize` 增 `verified` 字段（online 机翻 = false）；机翻关键词日志打 `[UNVERIFIED-MT]` 标记。
+- **`workbench/index.html`（P1）**：前端轮询上限 **90s → 210s**（后端 180s + 30s 余量），`pollTimeout` / `runningBanner` 文案同步（10 秒 ~ 3 分钟）；`wbTranslateHintHtml` 对未验证机翻追加警示（新增 i18n `kwTranslatedOnline`，zh/en）；`renderDone` 在 0 结果时渲染 `failedSources` 失败清单（新增 i18n `failedSourcesTitle` / `failedSourcesTip`，zh/en），不再把「源全失败」显示成「0 条合法空结果」。
+- **`workbench/server.py`（P1，回归顺带发现）**：CDE 关键词回退链补 `intr`（原链 cond-only，仅填干预词并勾选 CDE 时被静默跳过，日志打 `--with-cde 需要 --cde-keyword`）。
+- **验证**：`_authorized_endpoints()` 在 publish-dist 布局下放行 coze 双端点；term_map 阿西米尼→asciminib（source=term_map）；publish-dist 布局实跑 intr=阿西米尼 全链路通（本地 CT.gov 不通 → WHO 兜底经授权门放行取回记录）；inline JS 语法校验通过；发布后线上回归见部署记录。
+
+## v0.13.2 (2026-10-13) · 修复工作台调用 entry_point 恒为 skill（§1.3 接线）
+
+> ct-base coze_io_contract §1.3 工作台接线三架构之「架构 B · Popen 子进程」（本技能为孙进程链：`server.py → Popen(ct_registry.py) → subprocess.run(search_ictrp.py)`）。v0.13.x 只做了注入侧（`_attach_coze_contract` payload 带 entry_point），设置侧零接线；父进程 `set_entry_point()` 无法跨进程传递 → 应用页面调用恒落默认值 `skill`。
+
+- **`adapters/search_ictrp.py`**：新增 `_entry_point_from_env()`——模块加载时从环境变量 `CT_ENTRY_POINT` 解析 `_ENTRY_POINT` 初值（白名单 `skill`/`workbench`/`api`，空白/非法一律回退 `skill`）；`set_entry_point()` 运行期覆盖语义不变。
+- **`workbench/server.py`**：`Popen(ct_registry.py)` 的 `env` 增加 `CT_ENTRY_POINT=workbench`。环境变量沿 `server.py → ct_registry.py → search_ictrp.py` **逐级继承**（`ct_registry.py` 的 `subprocess.run` 未显式传 env，自动继承父进程环境）→ **中间层 ct_registry.py 零改动**。agent / 技能 CLI 不设该变量 → 恒 `skill`（无回归）。
+- **同步**：`workbench/publish-dist/adapters/search_ictrp.py`、`workbench/publish-dist/workbench/server.py` 与主文件逐字节一致（diff 验证）。
+- **验证**：`_entry_point_from_env()` 七组用例（含大小写变体 `WORKBENCH` → 回退）全过；`_attach_coze_contract` 默认注入 `skill` 且 `skill_version` 完好复核通过；`py_compile` 四份副本全过；跨技能契约回归 `ct-base/scripts/tests/test_entry_point.py` E1–E9 全绿。
+- **范式沉淀**：ct-base `references/coze_io_contract.md` §1.3 新增「工作台接线三架构」规范段，本技能为架构 B 范本之一（含孙进程链继承说明）。
+
 ## v0.13.1 (2026-10-13) · coze 0.3.94 文献检索月份级日期窗口（ct-literature online 原生过滤）
 
 > 用户指认 `adapters/coze` 即 ct-search.coze.site 云端代码位置，要求让 online/Coze 通道原生支持月份级日期窗口（而非调用方规避）。客户端 ct-literature v1.4.3 联动。

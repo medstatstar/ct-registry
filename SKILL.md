@@ -3,7 +3,7 @@ slug: ct-registry
 displayName: Clinical Trial Registry Search / 临床试验注册检索专家
 name: ct-registry
 cn_name: 临床试验注册检索专家
-version: 0.13.0
+version: 0.13.3
 invocable: true
 required_commands: [python]
 summary: "跨源检索全球临床试验注册库（ClinicalTrials.gov、CDE/ChiCTR/ISRCTN/DRKS/WHO ICTRP、PubChem），归一化聚合分期/状态/申办方/时间线/竞品格局，产出 JSON / Markdown，用于立项查重、对照设计与竞品格局分析。可选集成 pytrials 批量拉取 CT.gov 字段。"
