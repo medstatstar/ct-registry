@@ -201,3 +201,5 @@ Trigger (explicit request → two-stage confirmation; strong signal + retry ≥1
 ## Publishing (ct-base §16)
 
 Shared assets are single-source in `ct-base` (§16.8) — never edit a shared file locally and ship it. Mandatory pre-publish gate `scripts/publish_preflight.py` (shared-sync check → secret scan → ClawHub audit → inject dry-run) + `publish_inject.py` self-contained packaging → GitHub → SkillHub → ClawHub. Full procedure → **`docs/publishing.md`**.
+
+**2026-10-26 ct-base §22.24 双轨治理框架**：本技能涉及 AI-as-intervention（AI 作为被评估干预）与 AI-for-trial-operations（AI 作为运营支持）双轨分类；AI-as-intervention 须前瞻性注册 + SPIRIT-AI/CONSORT-AI，AI-for-trial-operations 须工作流准确性验证 + TRIPOD-AI/ICH E6(R3)（EClinicalMedicine 2026-10）。持续学习系统须版本锁定 + 漂移监测 + 回滚三件套。
