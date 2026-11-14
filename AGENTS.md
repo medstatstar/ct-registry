@@ -1,4 +1,4 @@
-# AGENTS.md — ct-registry v0.3.81
+# AGENTS.md — ct-registry v0.14.5
 
 ## Overview
 
@@ -37,7 +37,7 @@ confirmation follows `references/search_menu.md` (ct-base §6.1).
    `phase` (authoritative). Full field→CLI map in SKILL.md "Advanced search (高级检索)".
 3. **Execute + return** — direct sources run free (`--run`, no quota); external-workflow sources
    ride the shared endpoint (**1 count PER DEMAND** via `usage_guard`: WHO+CDE / keyword tweaks /
-  repeats sharing one `demand_id` collapse to a single count; daily cap = 100 demands; **local long-lived token, no refresh needed**).
+  repeats sharing one `demand_id` collapse to a single count; daily cap = 1000 demands; **local long-lived token, no refresh needed**).
    Then `normalize → aggregate → report`; PDFs never auto-download (only `--download-docs` on
    explicit user request). Full text in SKILL.md "Search procedure" section.
 
@@ -45,13 +45,13 @@ confirmation follows `references/search_menu.md` (ct-base §6.1).
 - WHO / CDE retrieval is **free** but rides a **shared** third-party endpoint (Coze /run); follow
   **minimal shared-resource occupation**. Bulk retrieval needs → direct the user to **contact the
   author (Wintone) for coordination**.
-- **Hard daily cap = 100 demands** (a demand = one `ct_registry.py --run`, or one agent task of
+- **Hard daily cap = 1000 demands** (a demand = one `ct_registry.py --run`, or one agent task of
   step-by-step retrievals sharing a `demand_id`). WHO+CDE / keyword tweaks / repeats inside the SAME
   demand all collapse to **1 count** — charged per `demand_id`, not per raw HTTP call. Counts only
   real `--run` network calls (WHO/CDE/ChiCTR/ISRCTN/DRKS); preview / `--store-token` / direct sources
   CT.gov/EU-CTR/PubChem are NOT counted. Rolls over at local midnight. **Each call prints the
   remaining quota** (a repeat of an already-counted demand prints "already counted, not re-charged");
-  at 100 demands the call is BLOCKED with "come back tomorrow". Counter: `config/usage.json` (fail-open on IO error).
+  at 1000 demands the call is BLOCKED with "come back tomorrow". Counter: `config/usage.json` (fail-open on IO error).
 - **PDFs are NEVER auto-downloaded**: `download_docs.py` lists links by default and downloads only
   with `--yes`; the orchestrator downloads only when `--download-docs` (explicit user request) is set.
 - Enforcement: `scripts/usage_guard.py` (`check()`), called from `search_ictrp.py`,

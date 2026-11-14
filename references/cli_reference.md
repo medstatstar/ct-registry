@@ -146,7 +146,7 @@ python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING \
 
 WHO (`--source who`) and CDE (`--source chinadrugtrials`) share the same unified endpoint, orchestrated by
 `ct_registry.py` in **Batch-1 concurrency**. All commands need `--run` to go online (preview is offline by
-default); the shared endpoint daily cap is 20 (per demand_id, WHO+CDE merged counts once).
+default); the shared endpoint daily cap is 1000 (per demand_id, WHO+CDE merged counts once).
 
 1. **Full WHO+CDE parallel (most common default):** covers zh+en dual registries; WHO exact EN match, CDE auto-translated ZH + bilingual.
    ```bash
@@ -297,7 +297,7 @@ follow the **minimal shared-resource occupancy** principle. The three limits are
    (one `ct_registry.py --run`, or one agent task's grouped stepwise searches) — whether it contains WHO+CDE,
    how many keyword tweaks, or repeats, all consume **1 quota** (same `demand_id` already counted → later calls
    say "already counted, not re-counted"). Preview, `--store-token`, direct sources CT.gov/EU-CTR/PubChem are
-   **NOT counted**. `usage_guard` still enforces a **hard daily cap of 100 demands** (local time, midnight roll).
+   **NOT counted**. `usage_guard` still enforces a **hard daily cap of 1000 demands** (local time, midnight roll).
    **Currently free** — the cap exists purely for fair shared-resource use; see README "配额与资源使用". At 100
    demands the run stops with "please use again tomorrow". Counter in `config/usage.json` (new `demands` list);
    read/write exceptions **fail open** (warn only, never block the skill).

@@ -187,7 +187,7 @@ Yes. The scripts auto-detect locale: all user-facing prompts switch to Chinese o
 List-mode search returns only summary fields. `sponsor` and `phase` are populated only by CDE `detail` mode (65 fields) or by WHO detail. Request detail when you need sponsor / phase breakdowns.
 
 **Is it free, and is there a quota?**
-Currently free. The shared third-party endpoint is metered by **demand** (one user request = 1 demand; WHO + CDE + keyword tweaks within it collapse to 1). Daily cap is 100 demands; direct Tier-1 sources (CT.gov v2, EU-CTR, PubChem) and preview are not counted.
+Currently free. The shared third-party endpoint is metered by **demand** (one user request = 1 demand; WHO + CDE + keyword tweaks within it collapse to 1). Daily cap is 1000 demands; direct Tier-1 sources (CT.gov v2, EU-CTR, PubChem) and preview are not counted.
 
 **Concurrency / parallel sessions (P1-7)?** The quota counter `config/usage.json` and the output dir are shared files inside the skill directory. `usage_guard.py` serialises their read-modify-write with an advisory file lock, so parallel calls won't corrupt the counter. Best practice is still **one skill per session**; if multiple AI sessions drive the same skill directory at once, rely on that lock and avoid sharing an `out_dir`.
 
@@ -224,7 +224,7 @@ When you mirror 14+ registries through WHO ICTRP in one call, **latency depends 
   | Broad (e.g. `cancer`) | 100,000+ | ❌ Only a small fraction | First page ~2-6s (HTTP probe), ~2-3s/page thereafter (browser) |
 
   What to do when you can't get everything: ① Accept partial results (enough for trend analysis); ② Narrow the scope (add intervention / sponsor / country filters); ③ Split into multiple queries (by dimension).
-- **How to keep the data volume sane:** WHO global results can be huge. If a query returns too few rows or times out, it's usually **too broad** — narrow the keyword (e.g. `osimertinib` instead of `cancer`), or use **advanced search** (just say "advanced search" in conversation; the code auto-builds precise `drug AND condition` filters, returning a smaller, faster set). Also (since 2026-09-08), for result sets **>100 records** the HTTP channel by design caps at 10 pages (~80-100 records) and marks the output `is_partial` — that is a **capacity boundary, not a fault**; for more, narrow the scope or request a larger page count. There's also a **daily cap of 100 demands** (see FAQ above) — normal use won't get near it.
+- **How to keep the data volume sane:** WHO global results can be huge. If a query returns too few rows or times out, it's usually **too broad** — narrow the keyword (e.g. `osimertinib` instead of `cancer`), or use **advanced search** (just say "advanced search" in conversation; the code auto-builds precise `drug AND condition` filters, returning a smaller, faster set). Also (since 2026-09-08), for result sets **>100 records** the HTTP channel by design caps at 10 pages (~80-100 records) and marks the output `is_partial` — that is a **capacity boundary, not a fault**; for more, narrow the scope or request a larger page count. There's also a **daily cap of 1000 demands** (see FAQ above) — normal use won't get near it.
 
 ## Safety (safe preview)
 
@@ -358,7 +358,7 @@ Detail fetch (≤100 items auto, >100 confirm) and PDF download are gated by exp
 `--reg-no`, `--indication`, `--case-no`, `--drugs-name`, `--drugs-type` (enum: 中药/天然药物/化学药物/生物制品), `--appliers`, `--communities`, `--researchers`, `--agencies`, `--trial-status` (11-value enum: 进行中/尚未招募/招募中/招募完成/已完成/主动暂停/主动终止/IEC·IRB暂停/IEC·IRB终止/责令暂停/责令终止). Note: CDE advanced UI has **no phase filter** — phase is post-filtered from detail.
 
 ### Interaction contract (two gates)
-- **Gate 1 — Pre-search brief (before any live-network call):** the assistant prints keywords (EN+ZH per source), scope, any time/status filter, the `demand_id` grouping + quota impact, and the "free, 100 demands/day" note. It asks only when there is a real choice.
+- **Gate 1 — Pre-search brief (before any live-network call):** the assistant prints keywords (EN+ZH per source), scope, any time/status filter, the `demand_id` grouping + quota impact, and the "free, 1000 demands/day" note. It asks only when there is a real choice.
 - **Gate 2 — Post-list confirmation:** it presents the list (count, scope, sample rows, `Unknown` phase/sponsor caveat). Detail fetch: ≤100 items auto-runs; >100 items confirm first. PDFs are never auto-downloaded.
 
 ### Errors (quick reference)
@@ -377,7 +377,7 @@ Detail fetch (≤100 items auto, >100 confirm) and PDF download are gated by exp
 
 ---
 
-**Version**: v0.13.0 | **License**: MIT | **Authors**: medstatstar, phoe-zip
+**Version**: v0.14.5 | **License**: MIT | **Authors**: medstatstar, phoe-zip
 
 For feature requests, bug reports, or other feedback, please contact the author directly at medstatstar@gmail.com (Wintone Zhang / 张文彤).
 

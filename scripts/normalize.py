@@ -77,6 +77,28 @@ def _to_int(v):
     return int(m.group(0).replace(",", "")) if m else None
 
 
+def _smod_date(v):
+    """Read a date out of a CT.gov statusModule field, tolerating shape drift.
+
+    ClinicalTrials.gov v2 returns most date fields as ``{"date": "YYYY-MM-DD",
+    "type": "ACTUAL"}`` but has been observed returning ``lastKnownStatus`` as a
+    bare enum string (``"RECRUITING"``). Older code assumed dict-only and raised
+    ``AttributeError: 'str' object has no attribute 'get'``, aborting the whole
+    normalize pass (and therefore the workbench run). A bare string is a status
+    value, not a date, so it yields None here — use ``_smod_status`` for it.
+    """
+    if isinstance(v, dict):
+        return v.get("date")
+    if isinstance(v, str) and len(v) >= 4 and v[:4].isdigit():
+        return v  # rare: plain ISO date string
+    return None
+
+
+def _smod_status(v):
+    """Return the status enum when the field is a plain string (v2 shape drift)."""
+    return v if isinstance(v, str) else None
+
+
 def norm_ctgov(study):
     ps = study.get("protocolSection", {})
     im = ps.get("identificationModule", {})
@@ -100,9 +122,15 @@ def norm_ctgov(study):
         # upgrade D (stale-trial detection): CT.gov exposes the real
         # last-update date in statusModule.lastUpdatePosted; also capture the
         # results-first-posted date when present. Feeds stale_check.
-        "last_update_posted": (sm.get("lastUpdatePosted") or {}).get("date")
-                              or (sm.get("lastKnownStatus") or {}).get("date"),
-        "status_last_known": (sm.get("lastKnownStatus") or {}).get("date"),
+        # v2 real field is lastUpdatePostDateStruct (lastUpdatePosted never
+        # existed -> this used to be permanently None, breaking stale_check).
+        "last_update_posted": _smod_date(sm.get("lastUpdatePostDateStruct"))
+                              or _smod_date(sm.get("lastUpdatePosted"))
+                              or _smod_date(sm.get("lastKnownStatus")),
+        # v2 may hand back a plain enum string here; keep the date when dict,
+        # otherwise fall back to the status value so nothing is lost.
+        "status_last_known": _smod_date(sm.get("lastKnownStatus"))
+                             or _smod_status(sm.get("lastKnownStatus")),
         "results_first_posted": (sm.get("resultsFirstPosted") or {}).get("date"),
         "phase": _first(dm.get("phases")) if dm.get("phases") else None,
         "conditions": [_clean(c) for c in cm.get("conditions", [])],

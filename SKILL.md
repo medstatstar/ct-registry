@@ -3,7 +3,7 @@ slug: ct-registry
 displayName: Clinical Trial Registry Search / 临床试验注册检索专家
 name: ct-registry
 cn_name: 临床试验注册检索专家
-version: 0.14.1
+version: 0.14.5
 invocable: true
 required_commands: [python]
 summary: "跨源检索全球临床试验注册库（ClinicalTrials.gov、CDE/ChiCTR/ISRCTN/DRKS/WHO ICTRP、PubChem），归一化聚合分期/状态/申办方/时间线/竞品格局，产出 JSON / Markdown，用于立项查重、对照设计与竞品格局分析。可选集成 pytrials 批量拉取 CT.gov 字段。零用户侧配置：检索端点凭证随包分发，开箱即用。"
@@ -29,6 +29,27 @@ permissions:
   data: "no confidential data input; public query terms plus non-content request metadata (query_origin machine-hash, skill_version, entry_point, user_language, demand_id) are transmitted via the unified endpoint / optional DXY CDE-mirror API; no user files or secrets are sent"
 
 ---
+## Data Egress Guardrail (CT family standard · F33)
+
+This skill may call external endpoints (Coze services, shared third-party search
+endpoints, public APIs or LLMs). **Internal confidential data must not leave the
+local domain.** Mandatory rules:
+
+- **Never outbound**: patient-level records, unpublished protocols / CSRs / internal
+  documents, personal identifiers or sponsor-confidential content — as query terms,
+  attachments or prompt payload.
+- **Allowed minimum**: public search terms and non-content metadata only (machine
+  hash, skill version, entry point, language, request id). Results from public
+  registries (ct.gov / CDE / FAERS / OpenAlex / PubMed, etc.) are processed locally.
+- **Local first**: computation, de-identification, aggregation and reporting stay on
+  this machine; confirm the payload carries no confidential field before any cloud call.
+- **Visible disclosure**: workbench search forms must state the outbound endpoint and
+  this boundary in visible text, not only in a hover tooltip.
+- **Fail loud**: stop and tell the user if any rule cannot be guaranteed; never
+  degrade silently.
+
+Machine-checked by `ct-base/scripts/spec_lint.py` rule **F33**.
+
 
 ## Language
 
@@ -38,6 +59,8 @@ permissions:
 This skill responds in the user's current input language and auto-detects / switches accordingly. The runtime scripts embed a locale check so all user-facing prompts switch to Chinese on a `zh-*` locale and to English otherwise. Code comments and documentation are English-only.
 
 The SKILL.md body, `references/*.md`, and `AGENTS.md` are English-only and agent-facing; runtime command prompts switch to Chinese / English by locale. For end-to-end walkthroughs and troubleshooting in your language, open the README above.
+
+**Deliverable language (v0.14.5):** result files (`report.xlsx` / `report.md`) never inherit the *server* OS locale — the published workbench runs in an en_US container, which used to emit all-English workbooks. `--lang auto` resolves in this order: explicit `--lang` > `CT_REGISTRY_LANG` (workbench injects the current UI language) > skill-root `config.json language` > cover-title language (CJK → zh) > OS locale > zh. English users still get English via `--lang en` or by switching the workbench UI to EN. Raw registry values (titles, status enums, sponsor names) are never translated — only the interface chrome.
 
 # Clinical Trial Registry Search
 
@@ -51,16 +74,17 @@ The SKILL.md body, `references/*.md`, and `AGENTS.md` are English-only and agent
 | Deploy metadata | `workbench/app.config.json` |
 | Deployed as | http-service (`python app.py`, entry bootstraps `workbench/server.py`) |
 | startCmd | `python app.py` |
-| publishDir | `workbench/publish-dist` |
-| Payload | `workbench/publish-dist/` (built by `workbench/publish-kit/build_publish.py`: `app.py` + `adapters/` + `scripts/` + `references/` + `workbench/`) |
+| publishDir | `workbench/publish` |
+| Payload | `workbench/publish/` (built by `workbench/publish-kit/build_publish.py`: `app.py` + `adapters/` + `scripts/` + `references/` + `workbench/`) |
 | Publish infra | `workbench/publish-kit/` (`.wbapp_*.genie` marker + `install_genie.py` + `build_publish.py`) |
 
 > **Re-publish rule (ct-base §13.5 Scheme B)**: always overwrite with the existing `appId` — the link
 > must stay `https://ct-registry.app.workbuddy.host/`. Never `createNewApp`. Before deploy:
-> 1. `python workbench/publish-kit/build_publish.py` — rebuild `workbench/publish-dist/` from the skill tree (whitelist + prune, no bulk delete).
-> 2. `python workbench/publish-kit/install_genie.py` — install the `.wbapp_*.genie` marker + `applications.yaml` into the **current workspace root** so `workbuddy_sites_deploy` can claim the appId (the marker's `localDir` is re-pinned to this machine's `publish-dist` on every run).
+> 1. `python workbench/publish-kit/build_publish.py` — rebuild `workbench/publish/` from the skill tree (whitelist + prune, no bulk delete).
+> 2. `python workbench/publish-kit/install_genie.py` — install the `.wbapp_*.genie` marker + `applications.yaml` into the **current workspace root** so `workbuddy_sites_deploy` can claim the appId (the marker's `localDir` is re-pinned to this machine's `publish` on every run).
 > 3. Deploy with the existing `appId` (overwrite). After deploy, assert the returned `shareLink` equals the expected URL (§13.5 dirty-binding red line).
-> Last republished 2026-09-26 (feedback two-stage fix); scheme B publish infrastructure migrated 2026-09-27.
+> Deploy registry, version anchors and the re-publish protocol → **`references/published_app.md`**
+> (single source of truth; load it before any deploy / re-publish operation).
 
 > Safe by default: preview, not execute.
 
@@ -114,7 +138,7 @@ Search global clinical-trial registries in one pass, normalize heterogeneous rec
 - **WHO Chinese-English keyword auto-translation (P0-C, 2026-09-07):** WHO ICTRP endpoint only accepts English (Chinese keywords reliably return 0; English hits normally). For any `source=who` search (including the ChiCTR→WHO fallback path where the keyword is Chinese), keyword / multi_keywords are auto-translated to English: curated term_map (`references/term_map.json`, bidirectional authoritative) first; dictionary-miss long-tail terms fall back to online translation (`kw_localize.online_translate`, MyMemory keyless); envelope labels `source=term_map/online` truthfully. Disable with `--no-kw-localize`. ⚠️ Online translation is unreliable for medical terms (tested `光生物调节`→`Photobioregulation`, WHO hit 0; correct term `photobiomodulation` hit 974) — **new domain terms MUST enter term_map (ct-base single source), do not rely on online fallback**.
 - **ChiCTR WAF pure-Python crack (server-side node, 2026-09-07):** ChiCTR's Alibaba Cloud WAF `acw_sc__v2` can be cracked deterministically — challenge page inlines `var arg1='<40 hex>'`, algorithm = 40-bit position permutation table + fixed XOR key, solvable in pure Python (no Node/Playwright needed). Coze-side `chictr_search_node` rewritten to **HTTP-first** (`searchproj.html?title=<kw>&page=N` new param; old `searchContent=` is dead), Playwright as fallback only. ⚠️ This change is in Coze server-side source — **must be re-packaged and deployed to Coze console to take effect**; local `--source chictr` goes through the unified endpoint and auto-benefits from the node update.
 - **WHO-COVERED 5-source auto WHO fallback (P0-D, 2026-09-07):** When a WHO-covered source is queried directly but that source's site is unreachable, auto-fallback to WHO ICTRP to retrieve that source's trials — no interruption, no empty hand. Layered: ① Unified-endpoint sources (ChiCTR/ISRCTN/DRKS, `search_ictrp.py`) detect `source_likely_down` then in-process switch to WHO, filter that source's records by `_SOURCE_ID_RE` and backfill (envelope `fallback_used=who_ictrp` / `<src>_records_via_who=N`); ② Tier-1 direct sources (CT.gov/EU-CTR, `ct_registry.py` orchestration) site-unreachable → `_tier1_who_backfill` auto-sends WHO search and merges into normalization — if WHO primary path already succeeded, the mirror already covers it, no duplicate request. CLI: `--no-fallback-who` disables auto-WHO-switch for unified-endpoint sources; Tier-1 fallback is on by default.
-- **研究布局 vs 疾病负担对标（P1，2026-10-18 情报推进）：** 复用 JCE 2026 方法，给注册检索加「资源是否投向高负担领域」分析。对按病因聚合的试验数与 GBD DALYs 算三个指标——**log-log 斜率 β**（β≈1 资源随负担线性，β<1 高负担投入不足）、**错配比**（实际试验份额 vs 负担份额）、**零试验病种占比**（T=0 病因数及其合计 DALYs 份额）。脚本 `scripts/burden_comparison.py`（纯 stdlib 做 OLS，matplotlib 可选出图）+ 方法学 `references/burden_benchmark.md`。GBD 数据用户自备，零联网。
+- **Research-layout vs disease-burden benchmarking (P1, intel push 2026-10-18):** reuses the JCE 2026 method to add an "are resources flowing to high-burden areas" analysis to registry search. Against trial counts aggregated by cause and GBD DALYs it computes three metrics — **log-log slope β** (β≈1 = resources scale linearly with burden; β<1 = high-burden areas under-funded), **misalignment ratio** (actual trial share vs burden share), and **share of zero-trial conditions** (number of causes with T=0 and their combined DALYs share). Script `scripts/burden_comparison.py` (pure-stdlib OLS; matplotlib optional for charts) + methodology `references/burden_benchmark.md`. GBD data is user-supplied; zero network calls.
 
 ## Requirements
 
@@ -147,6 +171,7 @@ Execute in **forced order** (scope → translate → search). Full three-step pr
 
 1. **Scope** — pick registries. WHO+CDE already covers CT.gov/EU-CTR/ChiCTR/ISRCTN/DRKS (two endpoints only); WHO and CDE are **separate calls** (shared `demand_id`), never one request.
 2. **Keywords** — translate per source (English for CT.gov/WHO/PubChem; CDE needs Chinese, strip "类" suffix, e.g. use `drugs_name=列汀` not `DPP-4抑制剂`).
+   > **🔤 CDE en→zh 翻译确认卡（0.5.02）**：端点直连路径的自动翻译映射随结果 JSON 的 `keyword_localization` 透出——凡遇 `ambiguous:true`（多候选）或 `fail_open`（英文未翻译）**必须停下向用户展示翻译确认卡并确认后重跑**；家族标准 → `ct-base/references/bilingual_retrieval.md` §5（模板 `ct-base/scripts/translation_gate.py`）；CDE 实例细则 → `references/search_procedure.md` §Translation Confirmation Card。
 3. **Execute** — direct sources free & unmetered; external-workflow sources counted once per `demand_id` (currently free, daily cap). Then `normalize → aggregate → report` (Excel final artifact; PDFs never auto-downloaded).
 
 > **⏱️ Retrieval time & data-volume guide** → **`docs/retrieval_guide.md`** (typical 10s–5min; partial-result-on-timeout; empirical record-throughput by keyword breadth).
@@ -182,9 +207,9 @@ One-shot example:
 python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-cde --no-expand --out-dir ./out --run
 ```
 
-# 研究布局 vs 疾病负担对标（P1）：检索结果聚合后对照 GBD DALYs
+# Research-layout vs disease-burden benchmarking (P1): compare against GBD DALYs after aggregating results
 python scripts/burden_comparison.py --trials out/normalized.json --dalys gbd_dalys.csv --out burden_comparison.json
-# 带图表（需 matplotlib）；trials 也可直接给聚合字典
+# With charts (requires matplotlib); trials may also be passed directly as an aggregation dict
 python scripts/burden_comparison.py --trials '{"diarrhea": 0, "breast_cancer": 120}' --dalys gbd_dalys.csv --chart burden_comparison.png
 
 ## Pipeline
@@ -194,6 +219,16 @@ python scripts/burden_comparison.py --trials '{"diarrhea": 0, "breast_cancer": 1
 
 See `references/units.md` for the atomic-task unit index.
 
+## 4.1 Recruitment-Population Acceptability Dimension (P1 · JMIR 2026 AI digital-recruitment study)
+
+> Source: JMIR Preprint 2026-10-11, *AI in Digital Recruitment for Cardiovascular Clinical Trials Among Black Adults* (10.2196/preprints.114103). When registry search / pooled analysis interprets "recruitment feasibility", it must include the target population's acceptability of, and barriers to, the recruitment approach — not only enrollment speed and coverage.
+
+**Discipline (new dimension for recruitment-feasibility interpretation)**:
+
+1. When results are used to assess recruitment feasibility for a trial or population, annotate the **population acceptability / perceived barriers / preferences** dimension in addition to registration counts and enrollment speed (where data are available).
+2. For historically under-represented populations, distinguish the two layers "feasible at registry level" vs "acceptable at participant level"; do not substitute coverage for acceptability.
+3. Aligns with `ct-eligibility` §7.1: recruitment-feasibility interpretation and screening-feasibility assessment share the same population-acceptability metric.
+
 ## Bug Reporting (ct-base §20.3, adapter: `adapters/bug_report.py`)
 
 Trigger (explicit request → two-stage confirmation; strong signal + retry ≥1 → ≤1 unsolicited proposal/session), two-stage confirmation, post-send history receipt, 11-key sanitization whitelist, client-only scope → **`docs/bug_reporting.md`**. Invoke: `python adapters/bug_report.py --error-type <t> --description "<free text>" [--send]` (add `--send` only after the user confirms).
@@ -202,4 +237,4 @@ Trigger (explicit request → two-stage confirmation; strong signal + retry ≥1
 
 Shared assets are single-source in `ct-base` (§16.8) — never edit a shared file locally and ship it. Mandatory pre-publish gate `scripts/publish_preflight.py` (shared-sync check → secret scan → ClawHub audit → inject dry-run) + `publish_inject.py` self-contained packaging → GitHub → SkillHub → ClawHub. Full procedure → **`docs/publishing.md`**.
 
-**2026-10-26 ct-base §22.24 双轨治理框架**：本技能涉及 AI-as-intervention（AI 作为被评估干预）与 AI-for-trial-operations（AI 作为运营支持）双轨分类；AI-as-intervention 须前瞻性注册 + SPIRIT-AI/CONSORT-AI，AI-for-trial-operations 须工作流准确性验证 + TRIPOD-AI/ICH E6(R3)（EClinicalMedicine 2026-10）。持续学习系统须版本锁定 + 漂移监测 + 回滚三件套。
+**2026-10-26 · ct-base §22.24 dual-track governance framework**: this skill touches both tracks of the dual classification — AI-as-intervention (AI as the evaluated intervention) and AI-for-trial-operations (AI as operational support); AI-as-intervention requires prospective registration + SPIRIT-AI/CONSORT-AI, whereas AI-for-trial-operations requires workflow-accuracy validation + TRIPOD-AI/ICH E6(R3) (EClinicalMedicine 2026-10). Continuously-learning systems require version locking + drift monitoring + rollback as a three-part package.

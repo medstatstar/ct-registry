@@ -187,7 +187,7 @@ python scripts/ct_registry.py --cond "NSCLC" --status RECRUITING --with-cde --no
 列表检索只返回概要字段。`sponsor` 与 `phase` 仅在 CDE `detail` 模式（65 字段）或 WHO detail 才有。需要申办方 / 分期明细时请抓详情（对话式或 CLI）。
 
 **免费吗？有配额吗？**
-当前免费。共享第三方端点按**需求（demand）**计次（一次用户请求 = 1 次需求；其内的 WHO+CDE、关键词微调、重复检索都合并为 1）。每日上限 100 个需求；直连 Tier-1 源（CT.gov v2、EU-CTR、PubChem）与预览不计入。
+当前免费。共享第三方端点按**需求（demand）**计次（一次用户请求 = 1 次需求；其内的 WHO+CDE、关键词微调、重复检索都合并为 1）。每日上限 1000 个需求；直连 Tier-1 源（CT.gov v2、EU-CTR、PubChem）与预览不计入。
 
 **结果能当监管申报用吗？**
 不能。输出仅用于参考 / 规划。CSR / 申报文件须另按 GCP 单独生成。
@@ -352,7 +352,7 @@ python scripts/export_xlsx.py --in normalized.json --out report.xlsx --title "As
 `--reg-no`、`--indication`、`--case-no`、`--drugs-name`、`--drugs-type`（枚举：中药/天然药物/化学药物/生物制品）、`--appliers`、`--communities`、`--researchers`、`--agencies`、`--trial-status`（11 值枚举：进行中/尚未招募/招募中/招募完成/已完成/主动暂停/主动终止/IEC·IRB暂停/IEC·IRB终止/责令暂停/责令终止)。注意：CDE 高级界面**无期次过滤**——分期由 detail 后筛。
 
 ### 人机交互契约（两道门）
-- **Gate 1 —— 检索前简报（在任一真实联网调用之前）：** 助手打印各源关键词（中英对照）、范围、时间/状态筛选、`demand_id` 分组与配额影响，以及"免费、每日 100 个需求"提示。仅在确有选择时才追问。
+- **Gate 1 —— 检索前简报（在任一真实联网调用之前）：** 助手打印各源关键词（中英对照）、范围、时间/状态筛选、`demand_id` 分组与配额影响，以及"免费、每日 1000 个需求"提示。仅在确有选择时才追问。
 - **Gate 2 —— 检索后列表确认：** 展示列表（总数、范围、样例行、`Unknown` 分期/申办方提示）。详情抓取：≤100 条自动执行；>100 条先确认。PDF 绝不自动下载。
 
 ### 错误处理（速查）
@@ -371,7 +371,7 @@ python scripts/export_xlsx.py --in normalized.json --out report.xlsx --title "As
 
 ---
 
-**版本**：v0.13.0 | **License**：MIT | **Authors**：medstatstar, phoe-zip
+**版本**：v0.14.5 | **License**：MIT | **作者**：medstatstar, phoe-zip
 
 如有功能建议、Bug 反馈或其他意见，请直接联系作者：medstatstar@gmail.com（张文彤 / Wintone Zhang）。
 

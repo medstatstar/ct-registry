@@ -44,7 +44,7 @@ import json
 import os
 import time
 
-DAILY_LIMIT = 100  # 用户 2026-08-12 明确：测试配额与正式配额统一为 100（已取代测试期临时 2000 与早期文档规划值 20）
+DAILY_LIMIT = 1000  # 用户 2026-10-23 明确：WHO/CDE 共享端点每日配额由 100 调整为 1000（取代 2026-08-12 的 100）
 # State file: default packaged path. Overridable via CT_USAGE_CONFIG so that
 # tests / CI / parallel sandboxes use an ISOLATED counter and never drain the
 # real shared daily quota (shipped in v0.3.47 regression-hardening).
@@ -54,7 +54,7 @@ def _usage_path():
 USAGE_PATH = _usage_path()
 AUTHOR_HINT = "（大批量检索需求请联系技能作者 Wintone 协调）"
 # Req2: make the "free but capped" policy explicit in every quota message.
-QUOTA_NOTE = ("当前免费使用；为充分利用共享资源，每日上限 100 个需求（按 demand_id 计），"
+QUOTA_NOTE = ("当前免费使用；为充分利用共享资源，每日上限 1000 个需求（按 demand_id 计），"
               "配额与资源使用详情见 README 的「配额与资源使用」小节。")
 
 

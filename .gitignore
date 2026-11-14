@@ -112,3 +112,13 @@ _user_meta.json
 ictrp_extsvc.json
 # ── 工作台临时测试产物（不随包 / 不进版本库）──
 workbench/_writetest.tmp
+
+# ── 研究草稿目录（2026-10-31 排查 F15 误报补）：`_research/` 为本地研究快照
+#    （含嵌套 .git 仓库、zt.tar.gz 2.8MB、.github/workflows 等），未 `git add`、
+#    不进发布包（git archive 重建跟踪树天然排除）；现显式 ignore 以防误提交，
+#    并让 spec_lint「文件系统−ignore」发布集口径正确排除之（原误判其随包发布）。
+_research/
+
+# ── ct-update 周检自动补齐（2026-11-03） ──
+browser_tests.py
+ctqa.config.json

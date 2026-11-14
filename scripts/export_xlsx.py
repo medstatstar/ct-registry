@@ -14,11 +14,15 @@ fine here because the workbook is generated from scratch each run. It gives us,
 vs openpyxl: native icon sets, richer chart data labels, single-cell rich-text
 (covers with mixed formats), proper header/footer codes, and faster writes.
 
-i18n (v0.3.25): all UI frame labels are localized via ct-base's shared
+i18n (v0.3.25 / v0.14.4): all UI frame labels are localized via ct-base's shared
 ``i18n.t()`` (single source of truth in ct-base/scripts/i18n.py, keys ``xlsx.*``).
-Pass ``--lang {auto,zh,en}`` (default ``auto`` = OS locale). RAW DATA VALUES
-(e.g. CDE Chinese status "进行中", Chinese conditions) are NEVER translated --
-data fidelity is preserved; only the interface chrome switches language.
+Pass ``--lang {auto,zh,en}``. ``auto`` is resolved by :func:`resolve_report_lang`
+(workbench UI language > config > cover-title language > OS locale > zh) instead
+of blindly following the server OS locale -- the published workbench runs in an
+en_US container, which used to make every Chinese user's workbook all-English.
+RAW DATA VALUES (e.g. CDE Chinese status "进行中", Chinese conditions) are NEVER
+translated -- data fidelity is preserved; only the interface chrome switches
+language.
 
 Sheets (names are also localized):
   1. 说明 / README            - cover banner + KPI cards + scope + field dictionary
@@ -146,6 +150,28 @@ STATUS_COL = MASTER_KEYS.index("status")  # 0-based
 
 def _master_header(k):
     return t(f"xlsx.field.{k}")
+
+
+# ---- report UI language resolution (阶段 2：上移 ct-base 共享件) ------------
+# 单一真源：ct-base/scripts/xlsx_delivery.py（publish_inject 注入本目录）。
+# 交付物语言禁止回退到服务器 OS locale；契约见 references/xlsx_delivery.md。
+from xlsx_delivery import resolve_report_lang  # noqa: E402
+
+_CJK_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")  # 封面标题中英切分用
+
+
+def _title_for_lang(title, lang):
+    """英文交付物的封面标题优先使用英文检索词片段。
+
+    检索词常为中英并列（"Orebatinib / 奥雷巴替尼"）；英文界面下原样保留会让
+    封面出现中文字符。按 "/" 切片保留不含 CJK 的片段；全中文时保持原值（宁可
+    保留数据，也不写空标题）。明细表内的中文数据值不受影响（数据保真红线）。
+    """
+    if lang != "en" or not title or not _CJK_RE.search(str(title)):
+        return title
+    parts = [p.strip() for p in str(title).split("/") if p.strip()]
+    en_parts = [p for p in parts if not _CJK_RE.search(p)]
+    return " / ".join(en_parts) if en_parts else title
 
 
 # ---- helpers (data logic, library-agnostic) --------------------------------
@@ -739,8 +765,11 @@ def build(recs, title, meta, out, lang="auto"):
     ``build`` is kept for backward compatibility (same signature as earlier versions,
     plus the optional ``lang`` keyword).
     """
-    if lang != "auto":
-        set_lang(lang)
+    # Always resolve explicitly. Leaving "auto" to i18n's OS-locale default made
+    # the published (en_US container) workbench emit an all-English workbook.
+    resolved = resolve_report_lang(lang, skill="registry", title=title)
+    set_lang(resolved)
+    title = _title_for_lang(title, resolved)
     wb = xlsxwriter.Workbook(out)
     wb.set_properties({"title": title or t("xlsx.doc.title"),
                        "author": "ct-registry · export_xlsx.py"})
@@ -767,8 +796,10 @@ def export_workbook(recs, out_path, *, title="", meta=None, lang="auto"):
         out_path: destination ``.xlsx`` path.
         title: report title shown on the cover and sheet banners (optional).
         meta: reserved for future use (currently unused).
-        lang: language for the report UI — ``"auto"`` (default, follows OS locale),
-            ``"zh"`` or ``"en"``. Raw DATA values are never translated (data fidelity).
+        lang: language for the report UI — ``"auto"`` (default; resolved by
+            :func:`resolve_report_lang`: workbench UI language > config >
+            cover-title language > OS locale > zh), ``"zh"`` or ``"en"``.
+            Raw DATA values are never translated (data fidelity).
 
     Returns:
         int — number of worksheets written.
@@ -797,7 +828,8 @@ def main():
     ap.add_argument("--title", default="")
     ap.add_argument("--meta", default="")
     ap.add_argument("--lang", choices=["auto", "zh", "en"], default="auto",
-                    help="report UI language (auto=OS locale, zh, en)")
+                    help="report UI language (auto=workbench UI / config / title "
+                         "language / OS locale, zh, en)")
     args = ap.parse_args()
     recs = json.load(open(args.inp, encoding="utf-8"))
     if isinstance(recs, dict):

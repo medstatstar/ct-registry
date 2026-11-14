@@ -29,6 +29,8 @@ import argparse
 import datetime as _dt
 import json
 import re
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -206,26 +208,106 @@ def _build_params(cond=None, intr=None, sponsor=None, status=None, max_n=50,
     return params
 
 
-def _fetch_page_urllib(params):
-    """Fetch a single page using urllib (default path, no extra deps)."""
+def _wait_seconds(backoff, attempt):
+    """Exponential backoff for `attempt` (1-based). `backoff<=0` disables waiting.
+
+    Note: `0 ** 0 == 1` in Python, so an explicit guard is required — passing
+    `backoff=0` must mean "retry immediately", not "wait 1 second".
+    """
+    if backoff <= 0:
+        return 0.0
+    return float(backoff) ** (attempt - 1)
+
+
+def _fetch_page_urllib(params, timeout=30, max_retries=3, backoff=2.0):
+    """Fetch a single page using urllib (default path, no extra deps).
+
+    Retry policy (2026-11-03, P3 归一反向移植自 meta-analysis `registry_probe._get_json`):
+      - HTTP 429: honor the `Retry-After` header; else exponential backoff.
+      - 5xx / URLError / OSError / TimeoutError: exponential backoff (`backoff ** (attempt-1)`).
+      - other 4xx (parameter errors): non-retryable, raised immediately.
+      - retries exhausted: RuntimeError (caller decides degrade or abort).
+
+    `backoff<=0` disables waiting (kept for the test suite / offline harness).
+    """
     url = BASE + "?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read().decode("utf-8"))
+    last = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            req = urllib.request.Request(url, headers=UA)
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                ra = e.headers.get("Retry-After")
+                wait = float(ra) if ra else _wait_seconds(backoff, attempt)
+                if attempt < max_retries:
+                    if wait > 0:
+                        time.sleep(wait)
+                    continue
+                last = e
+                break
+            if 500 <= e.code < 600:
+                if attempt < max_retries:
+                    wait = _wait_seconds(backoff, attempt)
+                    if wait > 0:
+                        time.sleep(wait)
+                    continue
+                last = e
+                break
+            raise  # 4xx other than 429 → non-retryable
+        except (urllib.error.URLError, OSError, TimeoutError) as e:
+            if attempt < max_retries:
+                wait = _wait_seconds(backoff, attempt)
+                if wait > 0:
+                    time.sleep(wait)
+                continue
+            last = e
+            break
+    raise RuntimeError("ClinicalTrials.gov request failed after %d retries: %s"
+                       % (max_retries, last))
 
 
-def _fetch_page_session(session, params):
-    """Fetch a single page using requests.Session (fast path, connection pool)."""
-    resp = session.get(BASE, params=params, timeout=30)
-    resp.raise_for_status()
-    return resp.json()
+def _fetch_page_session(session, params, max_retries=3, backoff=2.0):
+    """Fetch a single page using requests.Session (fast path, connection pool).
+
+    Same retry/backoff policy as `_fetch_page_urllib` (429 honored via
+    `Retry-After`, 5xx / network errors retried with exponential backoff).
+    `backoff=0` disables waiting.
+    """
+    last = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = session.get(BASE, params=params, timeout=30)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:  # noqa: BLE001 - normalize below
+            status = getattr(e, "response", None)
+            code = getattr(status, "status_code", None)
+            retryable = code is None or code == 429 or 500 <= int(code) < 600
+            if not retryable or attempt >= max_retries:
+                raise
+            wait = _wait_seconds(backoff, attempt)
+            if wait > 0:
+                time.sleep(wait)
+            last = e
+    raise RuntimeError("ClinicalTrials.gov session request failed after %d retries: %s"
+                       % (max_retries, last))
 
 
 def search(cond=None, intr=None, sponsor=None, status=None, max_n=50,
-           fields=None, date_after=None, page_token=None, **extra):
-    """Default search path (urllib, single page). Backward-compatible."""
+           fields=None, date_after=None, page_token=None,
+           timeout=30, max_retries=3, backoff=2.0, **extra):
+    """Default search path (urllib, single page). Backward-compatible.
+
+    `timeout` / `max_retries` / `backoff` are new optional knobs (defaults keep the
+    historic behaviour: 30s timeout, 3 attempts, 2.0s base backoff). They exist so
+    callers that reused meta-analysis's `_get_json` retry policy keep that
+    capability after the P3 normalisation instead of silently losing it.
+    """
     params = _build_params(cond, intr, sponsor, status, max_n, fields, page_token, **extra)
-    data = _fetch_page_urllib(params)
+    data = _fetch_page_urllib(params, timeout=timeout, max_retries=max_retries,
+                              backoff=backoff)
     if date_after:
         # CT.gov v2 has no reliable server-side start-date filter param; post-filter
         # the returned studies by start-date lower bound (robust, source-agnostic).
@@ -236,12 +318,15 @@ def search(cond=None, intr=None, sponsor=None, status=None, max_n=50,
 
 def search_fast(cond=None, intr=None, sponsor=None, status=None,
                 max_total=500, page_size=500, max_workers=4,
-                fields=None, date_after=None, **extra):
+                fields=None, date_after=None, timeout=30, max_retries=3,
+                backoff=2.0, **extra):
     """Fast path: requests.Session + large pageSize + concurrent pagination.
 
     Uses connection pooling (keep-alive) to avoid repeated TCP+TLS handshakes,
     and fetches multiple pages concurrently via ThreadPoolExecutor.
     Returns the same shape as search() but with all pages merged.
+
+    `timeout` / `max_retries` / `backoff` mirror `search()` (same defaults).
     """
     import requests
     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -251,7 +336,7 @@ def search_fast(cond=None, intr=None, sponsor=None, status=None,
 
     # First page: get totalCount + first batch of studies
     params = _build_params(cond, intr, sponsor, status, page_size, **extra)
-    first = _fetch_page_session(session, params)
+    first = _fetch_page_session(session, params, max_retries=max_retries, backoff=backoff)
     total_count = first.get("totalCount", 0)
     all_studies = list(first.get("studies", []))
     next_token = first.get("nextPageToken")
@@ -263,7 +348,7 @@ def search_fast(cond=None, intr=None, sponsor=None, status=None,
         # Fetch remaining pages concurrently
         def fetch_page(token):
             p = _build_params(cond, intr, sponsor, status, page_size, fields, token, **extra)
-            return _fetch_page_session(session, p)
+            return _fetch_page_session(session, p, max_retries=max_retries, backoff=backoff)
 
         tokens = [next_token]
         # We need to chain tokens sequentially since each page returns the next token

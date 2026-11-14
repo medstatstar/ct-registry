@@ -7,7 +7,7 @@
   </defs>
 
   <!-- ② 整体圆弧角方框（含柔和投影） -->
-  <rect x="-52" y="-52" width="104" height="104" rx="20" fill="#EEEDFE" stroke="#C9DCEE" stroke-width="0.5" transform="translate(52,52)" filter="url(#logoShadow)"/>
+  <rect x="-52" y="-52" width="104" height="104" rx="20" fill="#EAF2FB" stroke="#C9DCEE" stroke-width="0.5" transform="translate(52,52)" filter="url(#logoShadow)"/>
 
   <!-- ① 左上角统一文字（ct-* 系列通用，B 档主色 #1C6DD0） -->
   <g transform="translate(7,13)">
@@ -22,7 +22,7 @@
     <circle cx="78.5" cy="88.5" r="4" fill="#1C6DD0"/>
 
     <!-- 放大镜镜框（r=25，镜环加粗至 4.5，轮廓主导） -->
-    <circle cx="50" cy="60" r="25" fill="#EEEDFE" stroke="#1C6DD0" stroke-width="4.5"/>
+    <circle cx="50" cy="60" r="25" fill="#EAF2FB" stroke="#1C6DD0" stroke-width="4.5"/>
 
     <!-- 镜内地球仪（r=18，留出清晰镜环） -->
     <circle cx="50" cy="60" r="18" fill="#C9DCEE" opacity="0.50"/>

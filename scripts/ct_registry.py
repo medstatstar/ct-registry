@@ -217,8 +217,36 @@ def _cleanup_meta(out_dir):
 
 
 def run(cmd):
+    """Run a subprocess (inherits stdio for live child output).
+
+    On failure raises ``subprocess.CalledProcessError`` so existing per-source
+    try/except guards (CDE/Coze detail, EU-CTR doc, WHO-COVER) still catch it —
+    BUT we print one clean WARN line first so the failure is never an opaque
+    traceback. Any *unguarded* call is caught by the top-level guard in ``main()``
+    (P0-B), which writes ``run_status.json(crashed=true)`` and exits cleanly.
+    这是「对所有子任务统一防御」的统一入口：单个子任务失败不再拖垮整轮检索。
+    """
+    # 所有 python 子命令强制 -u：管道下 TextIOWrapper 默认块缓冲（8KB/进程结束才刷），
+    # 导致子任务输出在 running 期全部攒到结束时才一次性涌出。加 -u 后每行实时可见。
+    if cmd and (cmd[0] == PY or os.path.basename(cmd[0]).lower().startswith("python")) and "-u" not in cmd[1:3]:
+        cmd = [cmd[0], "-u"] + cmd[1:]
+    # request_id（0.5.02，2026-11-11）：整轮 ct_registry 检索 = 一次用户请求。
+    # 顶层生成一次，经 env 透传给所有子进程（search_ictrp 等）——子进程内
+    # _attach_coze_contract 优先取 env，保证同轮多源/多腿落飞书共享同一
+    # request_id（治理判重按 (request_id, call_type)，替代时间窗猜测）。
+    # 2026-11-11 Fix E：ct-advisor 通过 CT_REQUEST_ID 注入上游请求 ID 时优先继承，
+    # 使 advisor→registry 全链路共享同一 ID（云端据此跨子调用幂等去重）。
+    if "CT_REGISTRY_REQUEST_ID" not in os.environ:
+        import uuid as _uuid
+        os.environ["CT_REGISTRY_REQUEST_ID"] = (
+            os.environ.get("CT_REQUEST_ID") or _uuid.uuid4().hex)
     print("+ " + " ".join(cmd))
-    subprocess.run(cmd, check=True)
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"[ct_registry][WARN] 子任务失败 (rc={e.returncode}): "
+              f"{' '.join(map(str, e.cmd))}")
+        raise
 
 
 def _resolve(raw, target, confirm_val):
@@ -498,6 +526,28 @@ def _emit_run_status(args):
         print(f"[ct_registry][run_status] disclosure append skipped: {e}")
 
 
+def _pipeline_fatal(args, err, step):
+    """P0-B 顶层兜底：核心管道子任务失败时，写 run_status(crashed=true) 并干净退出
+    （不吐原始 traceback）。这是「对所有子任务统一防御」的收口——单个步骤失败
+    不再拖垮整轮检索、也不被静默掩盖，而是显式披露 + 状态落盘。
+    """
+    print(f"\n[ct_registry][FATAL] 核心步骤 '{step}' 执行失败: {err}")
+    if isinstance(err, subprocess.CalledProcessError):
+        print(f"[ct_registry][FATAL] 失败命令: {' '.join(map(str, err.cmd))} (rc={err.returncode})")
+    print("[ct_registry][FATAL] 已写入 run_status.json(crashed=true)。请依据上方 [WARN] "
+          "子任务失败行定位原因；必要时单独重跑该源或联系技能作者 Wintone。")
+    _RUN_STATUS["crashed"] = True
+    _RUN_STATUS["failed_step"] = step
+    _RUN_STATUS["error"] = str(err)[:500]
+    try:
+        with open(os.path.join(getattr(args, "out_dir", os.getcwd()), "run_status.json"),
+                  "w", encoding="utf-8") as f:
+            json.dump(_RUN_STATUS, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    sys.exit(1)
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Cross-source trial-registry search -> normalize -> aggregate -> report")
@@ -617,7 +667,8 @@ def main():
     ap.add_argument("--keep-meta", action="store_true",
                     help="保留中间 md/json(默认删除, 仅留 .xlsx)。")
     ap.add_argument("--lang", choices=["auto", "zh", "en"], default="auto",
-                    help="Excel 界面语言(默认 auto=OS locale)。")
+                    help="Excel 界面语言(auto=工作台界面语言/配置/标题语言/OS locale，"
+                         "zh/en 为显式指定；不跟随服务器 locale 误判为英文)。")
     # io
     ap.add_argument("--out-dir", default="./out")
     ap.add_argument("--run", action="store_true",
@@ -673,7 +724,7 @@ def main():
                 print("[ct_registry][PREVIEW]   CDE source WILL be included (needs Bearer token).")
         # Policy reminder (shared-resource minimal occupation + bulk coordination).
         print("[ct_registry][POLICY] WHO/CDE 等共享端点检索遵循「共享资源最小占用」原则："
-              "每日上限 100 次，达上限请次日再用；"
+              "每日上限 1000 次，达上限请次日再用；"
               "大批量检索需求请直接联系技能作者 Wintone 协调。")
         print("[ct_registry][POLICY] PDF 文档默认不自动下载；仅在您明确要求下载时才会执行。")
         return
@@ -695,7 +746,17 @@ def main():
     cond_v, cond_st = _resolve(args.cond, "en", args.confirm_cond)
     intr_v, intr_st = _resolve(intr, "en", args.confirm_intr)
 
-    # === Batch 1: WHO (if --with-ictrp) + CDE (if --with-cde) — run concurrently ===
+    # === Phase 1: CT.gov 基座 FIRST（快源优先, 2026-10-23）===
+    # CT.gov 是 Tier-1 直连、零共享配额、秒级返回且数据比 WHO/ICTRP 实时。
+    # 无论 WHO 是否成功都先跑，保证用户最先拿到 CT.gov 结果，不被 WHO 的
+    # 90s 超时拖住（此前 CT.gov 排在 WHO+CDE 并发批之后，WHO 退化时整条链被卡，
+    # 出现"勾选 WHO 白等无返回"的卡死观感）。
+    # CT.gov 站点不通的 WHO 兜底改在 Phase-2（WHO 决策）之后统一处理，
+    # 避免尚未跑 WHO 就误触发重复检索。
+    _run_ctgov(args, cond_v, intr_v, intr, cond_st, intr_st, args.out_dir, norm_inputs)
+    ctgov_ok = "--ctgov" in norm_inputs
+
+    # === Phase 2: WHO (if --with-ictrp) + CDE (if --with-cde) — run concurrently ===
     # WHO aggregates 14+ primary registries in ONE call, COVERING most national
     # registries we otherwise reach individually (CT.gov, EU-CTR, ISRCTN, DRKS,
     # ChiCTR). Policy (2026-07-28): covered sources are FALLBACK-ONLY. EXCEPTION:
@@ -708,6 +769,7 @@ def main():
     # (orchestrator parent side) and child endpoint subprocesses skip their own
     # check via CT_DEMAND_CHECKED=1, so the daily quota is charged exactly once
     # per demand even under concurrency (no cross-process double-count).
+    # WHO 为慢源（--who-timeout 默认 90s 快速失败），排在所有快源之后，不阻塞 Phase-1。
     who_primary = args.with_ictrp
     who_ok = False
     # --- prepare WHO date window + Batch-1 tasks (local, no network) ---
@@ -725,6 +787,12 @@ def main():
     if stop:
         return
 
+    # CT.gov 站点不通兜底（Phase-1 已先行）：仅当 CT.gov 失败 且 WHO 也失败时才补发 WHO，
+    # 避免重复检索；WHO 成功则其镜像已含 NCT 试验，无需补发。
+    if not ctgov_ok and who_primary and not who_ok:
+        _tier1_who_backfill(args, args.out_dir, norm_inputs, "CT.gov",
+                            cond_v or intr_v or args.sponsor)
+
     skip_covered = who_primary and who_ok
     force_all = who_primary and (not who_ok) and args.fallback_covered
 
@@ -738,10 +806,7 @@ def main():
     # Confirm gate (foreign/CT.gov keywords not in term map); skipped if WHO covered.
     _confirm_foreign_gate(args, args.cond, intr, cond_st, intr_st, skip_covered)
 
-    # CT.gov 基座无条件先行（2026-08-13）：Tier-1 免费直连、零共享配额、秒级返回且数据比
-    # WHO/ICTRP 实时——即使 WHO 成功（skip_covered）也保留 CT.gov 作实时基座与交叉验证；
-    # normalize/aggregate 按 registry_id 自动去重，不会重复。
-    _run_ctgov(args, cond_v, intr_v, intr, cond_st, intr_st, args.out_dir, norm_inputs)
+    # CT.gov 基座已在 Phase-1 先行（见上文），此处不再调用。
 
     # --- CDE retrieval now runs inside the parallel Batch-1 block (above) ---
     # (kept here only as a structural marker; CDE is always independent of WHO)
@@ -799,7 +864,11 @@ def main():
 
     # --- normalize (multi-source -> unified schema) ---
     normalized = os.path.join(args.out_dir, "normalized.json")
-    run([PY, os.path.join(HERE, "normalize.py"), *norm_inputs, "--out", normalized])
+    # P0-B 统一防御：核心管道步骤失败 -> 干净兜底（写 run_status + 退出），不吐 traceback。
+    try:
+        run([PY, os.path.join(HERE, "normalize.py"), *norm_inputs, "--out", normalized])
+    except subprocess.CalledProcessError as e:
+        _pipeline_fatal(args, e, "normalize")
 
     # --- P0-A: --track snapshots the current normalized result for future diff ---
     if args.track:
@@ -809,17 +878,27 @@ def main():
 
     # --- aggregate + report ---
     agg = os.path.join(args.out_dir, "agg.json")
-    run([PY, os.path.join(HERE, "aggregate.py"), "--in", normalized, "--out", agg])
+    try:
+        run([PY, os.path.join(HERE, "aggregate.py"), "--in", normalized, "--out", agg])
+    except subprocess.CalledProcessError as e:
+        _pipeline_fatal(args, e, "aggregate")
 
     report = os.path.join(args.out_dir, "report.md")
-    run([PY, os.path.join(HERE, "report.py"), "--in", agg, "--out", report,
-         "--json-out", os.path.join(args.out_dir, "agg_full.json")])
+    try:
+        run([PY, os.path.join(HERE, "report.py"), "--in", agg, "--out", report,
+             "--json-out", os.path.join(args.out_dir, "agg_full.json")])
+    except subprocess.CalledProcessError as e:
+        _pipeline_fatal(args, e, "report")
 
     # --- confirm-gated document download (--download-docs = explicit user confirmation) ---
     if args.download_docs:
         docs_out = os.path.join(args.out_dir, "docs")
-        run([PY, os.path.join(ADAPTERS_DIR, "download_docs.py"), "--in", normalized,
-             "--out-dir", docs_out, "--yes"])
+        # P0-B 优雅降级：文档下载为可选增强，失败仅告警、不中断注册库检索主流程。
+        try:
+            run([PY, os.path.join(ADAPTERS_DIR, "download_docs.py"), "--in", normalized,
+                 "--out-dir", docs_out, "--yes"])
+        except subprocess.CalledProcessError as e:
+            print(f"[ct_registry][WARN][docs] 文档下载失败 ({e})，跳过（不影响注册库检索）。")
 
     # --- optional PubChem enrich (needs ENGLISH drug name) ---
     if args.with_pubchem and args.drug:
@@ -832,17 +911,37 @@ def main():
                   f"建议英文译文: {sug or '<请提供>'}。"
                   f" 用 --confirm-drug 传入确认译文后重跑。")
         pc = os.path.join(args.out_dir, "pubchem.json")
-        run([PY, os.path.join(ADAPTERS_DIR, "enrich_pubchem.py"), "--run", "--drug", drug_v,
-             "--targets", "--out", pc])
+        # P0-B 优雅降级：PubChem 富化为可选增强，其失败（药物未收录/网络抖动）
+        # 绝不可拖垮注册库检索主流程。故不启用 check=True，异常时仅告警并继续。
+        ep = [PY, os.path.join(ADAPTERS_DIR, "enrich_pubchem.py"), "--run", "--drug", drug_v,
+              "--targets", "--out", pc]
+        try:
+            print("+ " + " ".join(ep))
+            rc = subprocess.run(ep, capture_output=True, text=True)
+            if rc.returncode != 0:
+                print(f"[ct_registry][WARN][PubChem] 富化子进程退出码 {rc.returncode}，"
+                      f"已跳过化合物富化（不影响注册库检索）。")
+                if rc.stderr.strip():
+                    print("  └ " + rc.stderr.strip().splitlines()[-1])
+            elif rc.stdout.strip():
+                print(rc.stdout.strip())
+        except Exception as e:
+            print(f"[ct_registry][WARN][PubChem] 富化子进程异常 {e}，已跳过（不影响注册库检索）。")
 
     # --- optional year filter (--min-year, built-in) ---
     recs_for_excel, norm_in = _apply_min_year(args, normalized, args.out_dir)
     if norm_in:
         agg = os.path.join(args.out_dir, "agg.json")
-        run([PY, os.path.join(HERE, "aggregate.py"), "--in", norm_in, "--out", agg])
+        try:
+            run([PY, os.path.join(HERE, "aggregate.py"), "--in", norm_in, "--out", agg])
+        except subprocess.CalledProcessError as e:
+            _pipeline_fatal(args, e, "aggregate(min-year)")
         report = os.path.join(args.out_dir, "report.md")
-        run([PY, os.path.join(HERE, "report.py"), "--in", agg, "--out", report,
-             "--json-out", os.path.join(args.out_dir, "agg_full.json")])
+        try:
+            run([PY, os.path.join(HERE, "report.py"), "--in", agg, "--out", report,
+                 "--json-out", os.path.join(args.out_dir, "agg_full.json")])
+        except subprocess.CalledProcessError as e:
+            _pipeline_fatal(args, e, "report(min-year)")
 
     # --- P0-B: emit run-status manifest + disclosure (graceful-degradation) ---
     _emit_run_status(args)
@@ -971,6 +1070,21 @@ def _tier1_who_backfill(args, out_dir, norm_inputs, src_label, en_kw):
     return True
 
 
+# 治理护栏 (ct-registry 0.5.09)：发往统一端点 (search_ictrp.py --source) 的取值白名单。
+# 与 adapters/search_ictrp.py 的 API_SOURCE 键集合保持同步；新增源须两端同时登记，
+# 否则视为未注册 source，拦截发文（避免历史 advisor_source_not_deployed 类脏请求进飞书）。
+_VALID_COZE_SOURCES = ("who", "chinadrugtrials", "isrctn", "drks", "chictr", "euctr", "ctis")
+
+
+def _validate_coze_source(src, ctx):
+    """拒绝未注册 source；返回 True 表示合法。ctx 用于日志定位。"""
+    if src in _VALID_COZE_SOURCES:
+        return True
+    print(f"[ct_registry][SOURCE-ERROR] 未注册 source={src!r} ({ctx}) —— "
+          f"合法取值: {_VALID_COZE_SOURCES}。已跳过该源检索，未向统一端点发出脏请求。")
+    return False
+
+
 def _run_tier2_fallback(args, skip_covered, force_all, norm_inputs, extra_tasks=None):
     """Retrieve the WHO-covered national registries independently (parallel).
 
@@ -1001,6 +1115,8 @@ def _run_tier2_fallback(args, skip_covered, force_all, norm_inputs, extra_tasks=
     for _SRC, _sl, _kl, _ep, _api in _specs:
         _with = getattr(args, f"with_{_sl}", False)
         if skip_covered or (not _with and not force_all):
+            continue
+        if not _validate_coze_source(_api, f"{_SRC} 检索命令构造"):
             continue
         _kw = getattr(args, f"{_sl}_keyword", None) or _derive_kw(args, _kl)
         if not _kw:
@@ -1118,6 +1234,8 @@ def _run_coze_detail(list_path, detail_out, label, api_source, run, args):
               f"跳过自动补详情(可加 --auto-confirm 强制, 或单独跑 detail 模式)。")
         return None
     try:
+        if not _validate_coze_source(api_source, f"{label} 详情命令构造"):
+            return None
         run([PY, os.path.join(ADAPTERS_DIR, "search_ictrp.py"), "--run",
              "--source", api_source, "--out", detail_out,
              "--mode", "detail", "--project-list", list_path])
@@ -1475,7 +1593,15 @@ def _who_cmd(args, out, who_date_start, who_date_end, who_phase):
         intr = getattr(args, "who_intervention", None) or getattr(args, "drug", None) \
             or getattr(args, "intr", None)
         cond = getattr(args, "who_condition", None) or getattr(args, "cond", None)
-        search_kw = " ".join(t for t in (intr, cond) if t) or ictrp_kw
+        raw_kw = " ".join(t for t in (intr, cond) if t)
+        # 批量翻译一次（2026-10-23 工作台反馈）：上游（gate override / --ictrp-keyword）
+        # 已注入英译时直接复用，避免 WHO 适配器内部再对中文原文做一次在线翻译——
+        # 原写法 `intr/cond or ictrp_kw` 使已注入的英译被中文原文覆盖。
+        if ictrp_kw and raw_kw \
+                and kl.detect_lang(raw_kw) == "zh" and kl.detect_lang(ictrp_kw) == "en":
+            search_kw = ictrp_kw
+        else:
+            search_kw = raw_kw or ictrp_kw
         max_pages = max(1, (args.max + 9) // 10)
         cmd += ["--q", search_kw, "--max-pages", str(max_pages)]
     if who_date_start:
@@ -1900,8 +2026,9 @@ def _run_ctgov(args, cond_v, intr_v, intr, cond_st, intr_st, out_dir, norm_input
     try:
         run(cmd)
     except subprocess.CalledProcessError as e:
-        print(f"[ct_registry][WARN] CT.gov 站点检索失败 ({e}); 尝试 WHO ICTRP 兜底…")
-        _tier1_who_backfill(args, out_dir, norm_inputs, "CT.gov", cond_v or intr_v or args.sponsor)
+        # CT.gov 站点不通：不在此处兜底（WHO 尚未检索），交由主流程 Phase-2 之后统一处理，
+        # 避免尚未跑 WHO 就误触发重复检索。
+        print(f"[ct_registry][WARN] CT.gov 站点检索失败 ({e}); WHO 兜底将在 WHO 决策后统一处理。")
         return
     norm_inputs += ["--ctgov", ctgov]
 

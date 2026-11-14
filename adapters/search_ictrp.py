@@ -131,6 +131,19 @@ RECORD_SOURCE = {"who": "ICTRP", "chinadrugtrials": "CDE",
                  "isrctn": "ISRCTN", "drks": "DRKS", "chictr": "CHICTR",
                  "euctr": "EUCTR", "ctis": "CTIS"}
 
+# 治理护栏 (0.5.09)：发文前拦截未注册 source，避免脏请求进飞书 / 统一端点。
+# 历史 advisor_source_not_deployed 类 bug 即源于未注册 source 被静默当作 who 发出，
+# 现改为显式拒绝——调用方立即看到明确错误，而非污染飞书审计列。
+def _validate_source(args):
+    """拒绝未注册 source；合法取值见 API_SOURCE 键集合。"""
+    _src = getattr(args, "source", None)
+    if _src not in API_SOURCE:
+        sys.exit(
+            f"[ictrp-extsvc][ERROR] 未注册 source={_src!r} —— "
+            f"合法取值: {sorted(API_SOURCE.keys())}。"
+            f"脏请求已拦截，未向统一端点发出。"
+        )
+
 # 健康对照词（2026-09-06 实测确认）：简单源（chictr/isrctn/drks）返回「0+无错误」时，
 # 歧义极大——可能是真实零结果，也可能是后端节点故障。用各组**必有海量登记**的对照词
 # 做一次性探针：若对照词也返回 0+无错误 → 判定源后端故障（节点坏），本次 0 条不可信；
@@ -231,6 +244,30 @@ def _localize_who_payload(payload, args=None):
     return metas
 
 
+def _gate_records_from_who_metas(metas):
+    """WHO 中→英本地化 meta 列表 → 翻译确认门契约记录（ct-base §5.2）。
+
+    meta {original, localized, source}，source ∈ {same, term_map, online, miss}：
+      same    → native_en（英文词直发英文源，放行）
+      term_map/online → whole（已翻译，放行知会）
+      miss    → fail_open + untranslated_risk=False（WHO 收录英文题目，
+                原文直发可接受 → 放行知会，不阻断；与 ChiCTR 同口径）
+    """
+    recs = []
+    for m in metas or []:
+        src = m.get("source")
+        base = {"original": m.get("original"), "localized": m.get("localized"),
+                "ambiguous": False, "source": "WHO"}
+        if src == "same":
+            base.update({"candidates": [], "mode": "native_en"})
+        elif src == "miss":
+            base.update({"candidates": [], "mode": "fail_open", "untranslated_risk": False})
+        else:
+            base.update({"candidates": [m.get("localized")], "mode": "whole"})
+        recs.append(base)
+    return recs
+
+
 def _compute_query_origin():
     """ct-base §8.6：query_origin = 硬件绑定的 sha256，标识调用来源机器。
 
@@ -307,18 +344,55 @@ def _skill_version(fallback="0.9.3"):
     return fallback
 
 
+def _request_id(args=None):
+    """request_id（0.5.02，2026-11-11）：一次用户请求的唯一 ID，落飞书独立列。
+
+    解析优先级：CLI --request-id > env CT_REQUEST_ID（ct-advisor 跨技能透传的上游
+    请求 ID，2026-11-11 Fix E）> env CT_REGISTRY_REQUEST_ID（ct_registry.py 子进程
+    链共享同一 ID）> 本进程新生成 uuid4（缓存于 args，escalation/fallback 重发同 ID）。
+    """
+    rid = getattr(args, "request_id", None) if args is not None else None
+    if rid:
+        return rid
+    # 2026-11-11 Fix E：ct-advisor 派发兄弟技能时注入 CT_REQUEST_ID，优先继承，
+    # 使一次用户请求内所有端点调用共享同一 request_id（云端据此幂等去重）。
+    rid = os.environ.get("CT_REQUEST_ID") or ""
+    if rid:
+        if args is not None:
+            try: args.request_id = rid
+            except Exception: pass
+        return rid
+    rid = os.environ.get("CT_REGISTRY_REQUEST_ID") or ""
+    if rid:
+        if args is not None:
+            try: args.request_id = rid
+            except Exception: pass
+        return rid
+    import uuid as _uuid
+    rid = _uuid.uuid4().hex
+    if args is not None:
+        try: args.request_id = rid
+        except Exception: pass
+    return rid
+
+
 def _attach_coze_contract(payload, args):
     """ct-base coze_io_contract §1.1 / §1.2 / §1.3：在出站 payload 注入统一信封字段。
 
     - skill_version：顶层（与 query_origin 同级），读 SKILL.md version:
     - user_language：params 子对象，由 resolve_user_language 三级判定（按用户输入文本）
     - entry_point（§1.3/§2.3，2026-10-07）：顶层，写入飞书独立列 entry_point
+    - request_id（0.5.02，2026-11-11）：顶层，写入飞书独立列 request_id——同一次
+      用户请求的多行记录（内部 escalation/fallback 重发）共享同一 ID，治理判重
+      按 (request_id, call_type) 聚合，替代时间窗猜测。
     幂等：重复调用不重复嵌套；不影响既有检索字段。
     """
     if "skill_version" not in payload:
         payload["skill_version"] = _skill_version()
     if "entry_point" not in payload:
         payload["entry_point"] = entry_point()
+    if "request_id" not in payload:
+        payload["request_id"] = _request_id(args)
     q = (args.q or args.who_title or args.who_condition
          or args.who_sponsor or args.who_intervention or "")
     params = payload.get("params")
@@ -345,6 +419,7 @@ def _map_status(status):
 
 
 def build_payload(args):
+    _validate_source(args)  # 治理护栏：未注册 source 拒发（detail / 程序化调用路径）
     api_source = API_SOURCE.get(args.source, "who")
     if args.mode == "detail" or args.project_list:
         # ---- detail fetch. project_list may be a JSON string OR a file path. ----
@@ -766,6 +841,33 @@ def _parse_response(data, source_label, payload, out, http_status=200, is_timeou
             data = dict(data)
             data["error_msg"] = _inner_err
             print(f"[ictrp-extsvc][BACKEND-ERROR] {_inner_err}")
+    # ── WHO/源后端抓取失败显式标记（2026-10-23 诊断补强）──────────────────────
+    # 当 Coze 抓手（Playwright）在源门户等不到检索表单/超时，会把错误塞进
+    # error_msg / log（如 "Page.fill: Timeout ... waiting for locator("#TextBox1")"）。
+    # 此时 0 条是「源后端不可用」（WHO 门户 502 宕机 / WAF 拦截 / 节点故障），
+    # 不是真实零结果，也绝非用户本机 IP 被封（链路是 用户机→Coze→源，源看到的是
+    # Coze 的 IP）。显式置 who_down / source_likely_down 并改写 error_msg 为可读提示 +
+    # 替代源清单，供编排层/用户直接判断，避免把 0 条误读成「无结果/被禁」。
+    _BACKEND_ERR_SIG = ("Page.fill", "waiting for locator", "#TextBox", "playwright",
+                        "net::", "element is not attached", "selector",
+                        "Timeout 30000ms", "navigation timeout", "scrape")
+    _err_blob = " ".join(str(x) for x in (data.get("error_msg") or "", data.get("log") or ""))
+    _is_backend_err = bool(_err_blob) and any(s in _err_blob for s in _BACKEND_ERR_SIG)
+    _src = (payload.get("source") if isinstance(payload, dict) else None) or "who"
+    if _is_backend_err and not records:
+        _backend_down_label = "WHO ICTRP" if _src == "who" else source_label
+        _alt = ("CT.gov / EU-CTR（Tier-1 直连）" if _src == "who"
+                else "CDE(chinadrugtrials) / CT.gov / EU-CTR")
+        _who_down_msg = (f"{_backend_down_label} 检索后端抓取失败（Coze 抓手在源门户等不到检索表单/"
+                         f"超时，原始错误见 error_msg / log）。这通常是源门户临时宕机或拦截，并非真实零结果，"
+                         f"也非你的 IP 被封——是你的机器连 Coze、Coze 再去连源，源看到的是 Coze 的 IP。"
+                         f"请稍后重试，或先用替代源：{_alt}。")
+        data = dict(data)
+        data["error_msg"] = _who_down_msg
+        _WHO_DOWN_DETECTED = True
+        print(f"[ictrp-extsvc][WHO-DOWN] ⚠️ {_who_down_msg}")
+    else:
+        _WHO_DOWN_DETECTED = False
     if not records and http_status == 200 and not data.get("error_msg"):
         print(f"[ictrp-extsvc][WARN] 0 records returned for source={source_label} "
               f"despite HTTP 200 and no error_msg. This is usually a TRANSIENT "
@@ -794,12 +896,22 @@ def _parse_response(data, source_label, payload, out, http_status=200, is_timeou
         "is_timeout": is_timeout,
         # 0 条 + 200 + 无错误：疑似后端节点故障（非真实零结果），标记供编排层披露
         "empty_no_error": (not records and http_status == 200 and not data.get("error_msg")),
+        # 2026-10-23 诊断补强：源后端抓取失败（Playwright 超时等）显式标注，避免静默 0 条
+        "who_down": (_WHO_DOWN_DETECTED and _src == "who"),
+        "source_likely_down": _WHO_DOWN_DETECTED,
         "escalate_to_combined": inner.get("escalate_to_combined") if isinstance(inner, dict) else None,
         "large_result_set": inner.get("large_result_set") if isinstance(inner, dict) else None,
         "is_partial": (inner.get("is_partial", False) if isinstance(inner, dict) else False),
         "log": data.get("log", ""),
         "query_origin": data.get("query_origin", ""),
     }
+    # ── P1-2（2026-11-11）：keyword_localization 完整透传 ──────────────────────
+    # 内层 dict（CDE/ChiCTR 节点输出）可能带关键词本地化记录数组（翻译确认门契约，
+    # 见 ct-base bilingual_retrieval.md §5）。此前仅字符串形态经 project_list_raw
+    # 保留、dict 形态被丢弃 → 上层确认卡拿不到数据。此处以 dict 形态透传。
+    _kl = inner.get("keyword_localization") if isinstance(inner, dict) else None
+    if isinstance(_kl, list) and _kl:
+        out_obj["keyword_localization"] = _kl
     # P1-followup (2026-08-12): surface partial-result gaps so the user knows they did
     # NOT get the full result set (unified gateway may return only part of a wide query).
     if out_obj.get("large_result_set"):
@@ -855,11 +967,20 @@ def run(payload, token, out, timeout, endpoint, source_label, use_stream=False, 
     # WHO 端只认英文：中文 keyword / multi_keywords 先本地化为英文（term_map → online）。
     # 覆盖直接 --source who --keyword 中文 与 ct_registry --with-ictrp 主路径。
     if payload.get("source") == "who":
-        _localize_who_payload(cur_payload, args)
+        _who_metas = _localize_who_payload(cur_payload, args)
+        _who_loc_recs = _gate_records_from_who_metas(_who_metas)
+    else:
+        _who_loc_recs = []
     for depth in range(MAX_WHO_ESCALATION + 1):
         last_out = _run_once(cur_payload, token, out, timeout, endpoint, source_label, use_stream)
         if last_out is None:
             return None
+        if _who_loc_recs:
+            # P1-2：WHO 本地化记录并入信封（补写盘——_run_once 落盘在前）
+            merged = last_out.get("keyword_localization") or []
+            last_out["keyword_localization"] = merged + \
+                [r for r in _who_loc_recs if r not in merged]
+            _write_out_json(out, last_out)
         # 已取到数据：不再因 escalate 信号丢弃已有结果。网关的 escalate_to_combined 是
         # 「结果过大请收窄」的**建议**，部分结果（如一页 10 条 / 共 578）远优于升级失败
         # 后覆盖成的 0 条。需要更全集时，由调用方改用 --mode combined + 真筛选重发。
@@ -1063,6 +1184,11 @@ def _fallback_who_for_source(payload, src, token, endpoint, timeout, source_labe
             pass
     if not who_out:
         return [], None
+    _fb_recs = _gate_records_from_who_metas(_fb_metas)
+    if _fb_recs:
+        merged = who_out.get("keyword_localization") or []
+        who_out["keyword_localization"] = merged + \
+            [r for r in _fb_recs if r not in merged]
     recs = who_out.get("records") or []
     matched = [r for r in recs if _source_record_check(r, src)]
     print(f"[ictrp-extsvc][FALLBACK-WHO] WHO 命中 {len(recs)} 条，其中 {src} 来源 {len(matched)} 条")
@@ -1422,6 +1548,10 @@ def main():
     ap.add_argument("--no-kw-localize", dest="no_kw_localize", action="store_true", default=False,
                     help="(仅 who 源) 关闭『中文关键词自动本地化为英文』（WHO 端只认英文；"
                          "默认 term_map 优先、词典 miss 走在线兜底）")
+    ap.add_argument("--request-id",
+                    help="请求唯一 ID（uuid4 hex）；缺省自动生成或取 env "
+                         "CT_REGISTRY_REQUEST_ID。一次用户请求内所有端点调用共享，"
+                         "落飞书独立 request_id 列，供治理按 (request_id, call_type) 判重")
     ap.add_argument("--no-stream", dest="stream", action="store_false", default=True,
                     help="强制同步 /run（默认走 /stream_run 流式；流式取不到结果会自动回退同步，此开关用于完全跳过流式）")
     ap.add_argument("--query-origin",
@@ -1430,6 +1560,9 @@ def main():
     ap.add_argument("--timeout", type=int, default=600,
                     help="Coze 检索等待超时上限（秒），默认 600 = 10 分钟；超时退出时返回值 is_timeout=True")
     args = ap.parse_args()
+
+    # 治理护栏 (0.5.09)：未注册 source 拒绝发文（避免脏请求进飞书）。
+    _validate_source(args)
 
     # ct-base §8.6：query_origin 必须由技能安装设备（本机）生成并携带，
     # 禁止由 Coze 服务器兜底生成（容器 hostname 漂移，且标识非来源机器）。

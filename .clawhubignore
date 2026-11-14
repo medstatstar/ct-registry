@@ -112,3 +112,10 @@ _user_meta.json
 ictrp_extsvc.json
 # ── 工作台临时测试产物（不随包）──
 workbench/_writetest.tmp
+
+# ── 研究草稿目录（ClawHub 不读 .gitignore，须自列；同 .gitignore 注释）──
+_research/
+
+# ── ct-update 周检自动补齐（2026-11-03） ──
+browser_tests.py
+ctqa.config.json

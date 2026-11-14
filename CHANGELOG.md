@@ -1,5 +1,315 @@
 # Changelog
 
+
+## 0.14.5 · 2026-11-14 · 对照 ct-base v1.4.46 最新工作台界面规范整改
+
+按 2026-11-14 晚间 ct-base 规范批次（§19.2 顶栏 `color-mix` 实底配方、§30.9 ④ 主内容区显式背景、§30-⑤ 白裸值废止、§32.5 状态三态色值、§11.8 窄屏 44px）整改 `workbench/index.html` 与 `workbench/wb-list.css`：
+
+- 顶栏状态 pill 四态与中性控件（语言 / 反馈 / CT 首页）统一改 `--wb-pill-base` 实底配方，文字 `--wb-on-topbar`；清除全部硬编码半透明白与裸白值；spinner 改 `--wb-on-brand` 浅环；内容区「连接中」由自造蓝 hex 改警示色三件套。
+- `.wb-main` 显式 `background:var(--wb-bg)`；正文链接按 §5.6.3-8 补 `.wb-main a` 并分面处理 `--wb-brand-soft` 对比度；状态 pill 文案包 `.wb-pill-t` 出省略号；运行记录「来源」列空值弱化为 `--`。
+- `wb-list.css`：`16px` 改 `var(--wb-fs-lg)`（iOS 聚焦防放大不变），窄屏媒体查询补 `.wb-list-size select{min-height:44px}`。
+
+同步：`references/term_map.json` 的 4 个新词回写 ct-base 真源；`workbench/publish/` 发布包重跑 `build_publish.py` 刷新；README 双版版本信息行对齐 0.14.5。另清理页面 zh/en 词典中 8 对零消费的孤儿键（`snapTip` / `historyEmpty` / `planWarnMiss` / `planRiskNone` / `planBtnClose` / `planApplied` / `planGroupsLabel` / `planPlanOnly`），配合 ct-base §29.2 判据修订，页面审计由 75 条 WARN 归零。
+
+**验证**：主题机检 P1=0 / WARN=0；结构闸门 C1–C8 P1=0；契约 `--check` 全 unchanged（14 块）；共享件一致闸门 exit 0；`spec_lint` ERROR 0（剩 3 条存量软上限 WARN）；`build_publish.py` 重跑后 publish 与源逐字节一致。浏览器 1440×900 / 390×844 实测：顶栏四态 computed 全为不透明 `color(srgb …)`（对比度 7.84 / 7.17 / 9.80 / 11.20，均 ≥4.5）、窄屏每页选择器与顶栏按钮均 44px、`.wb-main` 显式底色生效、列表 `table-layout:fixed` + 6 `<col>`、来源列空值 `--`，console 无错误。
+
+**后续（同日晚，随 ct-base v1.4.48 契约上移）**：窄屏 44px / 聚焦字号规则纳入 `@wb-contract:list-pagesize-mq` 并单源下发（含本页内联 `<style>` 段），不再留在契约外自由段；`.wb-cell-empty` 下沉 `tokens.css` 单源，本页删本地定义改引类；契约注释去掉 HTML 标签字面量，消除页面审计 `DUP-ID` 假阳性。发布包重跑后与源逐字节一致，390px 实测每页选择器 44px、搜索框 16px、顶栏按钮 44px、console 0 error。
+
+## 2026-11-13 · 共享资产契约同步（§11 / §19.2，非 UI 决策变更，页面版本号不变）
+
+按 ct-base 2026-11-13 增补批次同步共享资产：`workbench/wb-list.css` 注入卡片动作统一右列锚点（`.wb-list-cardacts-bottom` + `--wb-cardact-right` / `--wb-cardact-gutter`）；`workbench/tokens.css` 补 `--wb-pill-base` / `--wb-cardact-right` / `--wb-cardact-gutter`；`publish/` 下同名副本一并同步（另把 `index.html` 内联列表样式的旧 `right:10px` 改为新契约，publish 副本同步）。
+
+采用**精确注入**而非整文件覆盖：ct-base 真源 `wb-list.css` 的字号仍是裸 px，多数叶子已自行令牌化；整文件覆盖会把字号退回裸 px，并可能丢失技能自有令牌/增强，故只替换契约部分、保留其余原文。
+
+**验证**：CSS 花括号平衡；Playwright 实测 `--wb-cardact-right=10px`、`--wb-cardact-gutter=0px`、`--wb-pill-base` 生效，右上/右下动作规则均取 `var(--wb-cardact-right)`、`cardbody` 取 `var(--wb-cardact-gutter)`，页面 JS 错误 0；publish 副本与源逐字节一致。
+
+## 0.5.02 · 2026-11-11 · CDE 英文关键词本地化 + 浏览器反检测 + fail-loud（端点，待部署）
+
+> 2026-11-11 晚补（确认门审计修复，随本版本一并部署）：
+> - **P0-1 `chictr_search_node.py`**：ChiCTR 节点接入 `_cde_localize_keyword` 本地化
+>   （此前 L114-116 裸发英文），loc_log 透出 `keyword_localization`；ChiCTR 收录英文
+>   题目 → fail_open 记录标 `untranslated_risk:false`（放行知会不阻断）。
+> - **P1-2 `search_ictrp.py`**：①`_parse_response` 透传内层 dict 形态的
+>   `keyword_localization`（此前仅字符串形态经 project_list_raw 保留）；②新增
+>   `_gate_records_from_who_metas()`——WHO 中→英本地化 meta 转门契约记录（term_map/
+>   online→whole、miss→fail_open+risk:false、same→native_en），主路径 run() 与
+>   `_fallback_who_for_source()` 均并入信封。
+> - **连带修复**：`cde_search.py` 补 `import os`（0.5.02 编辑遗漏，部署即 NameError）。
+>
+> 2026-11-11 晚补二（request_id 同请求多行归因，随本版本一并部署）：
+> - **背景**：feishu_log_fetch 30 天诊断实证——registry 691 行中 292 行（42%）属
+>   「同请求多行」语义（94 个时间簇），querystr 无任何请求标识，治理判重只能靠
+>   时间窗猜。advisor 已用 request_id 解决同问题，registry 对齐。
+> - **端点侧**：`state.py` GraphInput/GlobalState/FeishuWriteInput 三处声明
+>   `request_id`；`feishu_write_node.py` 写入飞书**独立列** `request_id`（同
+>   entry_point 模式），列未建时自动剥离该列重试（优雅降级不丢行）。
+> - **调用侧**：`search_ictrp.py` `_attach_coze_contract()` 注入 `request_id`
+>   （优先级 CLI --request-id > env `CT_REGISTRY_REQUEST_ID` > 进程内 uuid4，
+>   args 缓存保证 escalation/fallback 重发同 ID）；`ct_registry.py` run() 顶层
+>   生成一次并经 env 透传给全部子进程——同轮多源/多腿共享同一 request_id。
+> - **分析侧**：ct-update `feishu_log_fetch.py` 新增 §6 request_id 折叠维度；
+>   治理判重口径改为 (request_id, call_type)——同 ID 下 analysis/subcall 各一行
+>   属合法分腿，同 ID 同 call_type 多行才是真重复。
+> - **部署后手工步骤**：飞书 searchlog 表加文本列 `request_id`（列名精确小写）；
+>   未加前写入自动降级（该列暂空），加列后自动恢复。
+
+**背景**：auto_check 深挖发现 CDE 30 天 empty 率 77%（171/223），empty 中位
+runtime 5.1s（159/171<10s）vs ok 中位 15.7s。经本地 headless Chromium 现场实测
+（Anaconda Playwright，2026-11-11），根因分层定型——
+
+1. **主因：CDE 中文库英文关键词 0 命中**。实测 `keywords=奥希替尼` → 20 条，
+   `keywords=osimertinib` → 0 条。30 天 empty 关键词多为英文药名/公司名。
+2. **公司名检索**：站点改版后 GET 结构化参数**已被支持**（2026-08-14「只认
+   keyword」结论过时）——实测 `appliers=圣因生物` → 10 条、`appliers=北京安龙`
+   → 5 条、`drugs_name=甲磺酸奥希替尼片` → 9 条；`keyword` 现也覆盖申办者文本。
+3. **WAF（次因）**：站点部署瑞数类 WAF（HTTP 202 + JS 挑战页，特征 meta
+   `id="9DhefwqGPrzGxEp9hPaoag"`）。本地实测 headless Chromium 可通过；云端
+   此前 5s empty 另有原因（预热循环假成功——挑战页 25KB>1000 字节被当作
+   「已通过」即开始抓取）。
+
+**修复（全部编译通过 + 离线/实测验证）**：
+
+- **`cde_search.py`**：
+  - 新增 `_cde_localize_keyword()`——纯 ASCII 关键词经 `_cde_drug_zh.json`
+    （en→zh 反查表，501 条，生成自 references/drug_name_map.json v1.1）翻译为
+    中文；多词查询逐词映射；查无映射 fail-open 保留原词。接入全部 4 处 URL
+    构造点（_build_search_url / _probe_cde_keyword / multi_keyword 主检索 /
+    silent_fallback 补发）。
+  - WAF 挑战页 fail-loud：命中挑战页指纹显式上报 `error="CDE_WAF_CHALLENGE: …"`
+    （不再伪装 0 结果）；首页加载挑战重试最多 2 次。
+- **`browser_utils.py`**：
+  - 修复预热假成功：旧循环 `len(content)>1000` 在 25KB 挑战页上立即 break；
+    新判据 = 内容正常且非挑战页（15×2s 窗口）。
+  - 指纹增强：UA 升级 Chrome/120→131（旧 UA 本身是检测信号）、locale/时区/
+    viewport/Accept-Language、plugins/languages/chrome 对象/permissions 伪装；
+    is_waf_challenge() 单一真相源移至此处，cde_search 复用。
+- **`feishu_write_node.py`**：① 文献族 source（lit_*/prospero/pubmed/
+  citation_verify）skillname 归 `ct-literature`；② `skill_version` 归一（调用方
+  前缀拆 `client_version` 单列）；③ resultstr 新增 `call_type` 与 `answer_hash`。
+- **`search_node.py`**：检索层 error（含 WAF）透传到 project_list JSON。
+- **新资产**：`src/graphs/nodes/_cde_drug_zh.json`（en→zh 反查表，自包含）。
+- **翻译确认卡（对话/工作台层）**：结果 JSON 新增 `keyword_localization` 数组
+  （original/localized/candidates/mode/ambiguous），所有输出路径（主流程/
+  multi_keyword/silent_fallback/single_fallback，含空结果分支）均透出；
+  `references/search_procedure.md` 新增 §Translation Confirmation Card——
+  ambiguous 多候选或 fail_open 英文残留时对话层必须停下确认后重跑
+  （`--cde-keyword` 注入用户确认的中文词），单候选仅知会不阻断；与
+  ct_registry.py 交互路径既有 Keyword-System Confirmation Gate 互不重复
+  （该路径 Manifest per_source.cde 已强制确认）。
+
+**验证**：py_compile 全过；本地化 7 用例离线全过（osimertinib→奥希替尼、
+多词混合、fail-open）；实站 A/B（本地 headless）appliers/drugs_name/中文
+keyword 全部命中。待 Coze 部署后线上复测（重点：英文药名 empty 率应大幅下降）。
+
+## 0.5.01 · 2026-11-09 · brief 速览性能优化（端点 + 本地）
+
+**背景**：线上稳态 literature brief ~18s、registry brief ~22–26s，波动 7–62s，
+曾贴近 Coze 网关 60s 硬顶（ct-base §20.17）。诊断确认瓶颈是 WHO 普通 keyword
+路径必启 Playwright 与 literature 两源串行，不是 brief 聚合逻辑。
+
+- **端点 `advisor_brief_nodes.py`**：① 两源 `ThreadPoolExecutor` 并发（每个任务独立
+  `contextvars.copy_context()`，保证 `runtime.context` 跨线程可读）；② registry 子 state
+  设 `who_condition`（与 keyword 同值）+ `max_pages=1`，命中 `who_search_node` 既有
+  `_try_http_fast_path` 纯 HTTP 路径，不启浏览器；`WHO_FAST_PATH_ENABLED=False` 可整体回退；
+  ③ 单轮软预算按 source 分档 18/15/12s，超时只标 `partial_sources`、保留已完成源，
+  绝不伪装 0 命中（线程不强杀、池有界 `max_workers=4`，属软预算）；④ `max_results`
+  由固定 `max(cap*2,30)` 改 `max(cap,10)`。
+- **本地 `ct-advisor`**：契约新增 `endpoint.per_source_timeout_sec`（20/35/40s）替代统一
+  90s；新增 `cache` 段（TTL 600s，系统临时目录，仅缓存 `status=ok` 且
+  `partial_sources` 为空，`CT_ADVISOR_BRIEF_CACHE=0` 可关闭）。
+- 🔴 **护栏 1 未破**：所有裁剪在节点内部固定，白名单仍锁死 8/6/6、零新增入参；
+  `disclaimer` / `suggest_footer` 文案逐字未动。响应 `brief` 内新增 `perf` 诊断字段
+  （`mode` / `deadline_sec` / `elapsed_sec`）供部署后 canary A/B。
+- **验证**：离线 dry-run 18/18（并发 0.30s、contextvars 继承、超时标 partial、
+  三 brief 端到端、护栏常量未漂移）、`test_cloud_brief` 全过、`selfcheck` 44/44、
+  `cloud_brief --self-test` 26/26；真实链路缓存关闭 8.01s → 端点缓存 0.31s →
+  本地缓存 0.01s，结果逐字一致。
+- ⚠ 收益需在**新包部署后**用 `canary_cloud_brief.py --only perf` 线上 A/B 确认；
+  若 `partial_sources` 偏高，调 `BRIEF_DEADLINE_SEC` 后重发包即可。
+
+## 0.5.00 · 2026-11-09 · coze 端点：ct-advisor 速览聚合三 source 上移
+
+> 这是**端点版本**（`adapters/coze/src/graphs/nodes/_version.py::COZE_VERSION`），
+> 与技能版本 0.14.5 正交。完整计划与部署清单见
+> `ct-advisor/docs/cloud_brief_rollout_20261109.md`。
+
+- 新增 `advisor_registry_brief` / `advisor_safety_brief` / `advisor_literature_brief`
+  三个 source（`src/graphs/nodes/advisor_brief_nodes.py`），**进程内复用**既有
+  who / chinadrugtrials / faers / openalex / europepmc 节点取数，零重复实现；
+  纯 stdlib 聚合，只回结构化 JSON 速览，不产 XLSX/HTML。
+- 三条护栏：参数白名单锁死 8/6/6 键（未知键 fail-closed）· 响应强制
+  `disclaimer`（速览、非审计级）· 强制 `suggest_skill` / `suggest_text` 导流回三个技能。
+  契约单一真相源 = `ct-advisor/config/brief_contract.json`。
+- `sources.py` 白名单 + `search_node.py` 懒加载分支同步登记
+  （`scripts/selfcheck.py` A1/A2 44/44 通过）；契约索引新增 3 条并由
+  `gen_contract_doc.py` 重生成 `adapters/coze/coze_contract.md`（禁手改）。
+- 顺带收敛契约索引 `coze_version`(0.4.00) 与 `_version.py`(0.4.02) 的版本漂移 → 0.5.00。
+- 决策依据：ct-base §20.19.5 范畴说明「检索族端点内 source 级上移 ≠ 跨族后端合并」；
+  ct-advisor 本地 need_tool 执行卡保留作降级兜底（§20.19.7 红线 2）。
+- 🔴 需重新打包发布 Coze 云端工作流后才生效；未部署时客户端自动回落，行为不变。
+
+## 0.14.5 — 2026-11-08 · 工作台能力对齐（workbench only，功能层不变）
+
+> 依据同日《ct-registry 工作台改进分析》。本次只改工作台、文档与检查工具，
+> 不改检索引擎行为。备份：`workbench/_bak_20261108/`。
+
+### 防复发 · 2026-11-08 横向补齐（同日 ct-safety 审计后追加）
+- `capability_parity.py` 新增**第 5 条「架构 ↔ 文案事实一致性」**：`FACT_CLAIMS` 断言表 +
+  `FACT_CROSS_CHECKS` 交叉断言，覆盖本技能上一轮修过的事实（`publish-dist` 不得复活 /
+  部署事实源必须存在且写明载荷目录 / 「下一迭代接入」期货文案不得回潮 / `/api/diff`
+  必须复用 `diff_snapshots`）。动因：ct-safety 审计发现「UI 陈述与 SKILL.md 架构事实
+  矛盾」这类问题，纯参数检查抓不到。ct-literature / ct-safety 同轮补齐该条。
+
+### P0 · 版本与发布链路
+- **五处版本锚点统一 `0.14.5`**：`SKILL.md` front-matter 0.14.2→0.14.5、正文 `v0.14.4`→`v0.14.5`、`workbench.config.json` 0.1.1→0.14.5、`app.config.json` 补 version。此前 `/api/config` 直读 `workbench.config.json`，**线上页脚显示 `v0.1.1`**。
+- **发布路径订正**：SKILL.md 的 `publishDir` / Payload / 重发布步骤由不存在的 `workbench/publish-dist` 全部改为 `workbench/publish`（与 `build_publish.py:38` DST、`app.config.json` 一致）；删掉写死的「Last republished 2026-09-26」，改指向新建的 `references/published_app.md`（部署单一事实源：registry / 版本锚点 / 重发布协议 / 待部署欠账 / 部署后冒烟清单）。
+- `build_publish.py` 新增 `_bak*` 目录段通用排除，防本地备份源码快照被打进载荷。
+
+### P1 · 已知功能缺口
+- **快照差异比对落地**：新增 `POST /api/diff`，只接受 run id（形状白名单 + 路径规范化校验），复用 `scripts/track_diff.diff_snapshots`——与 CLI `--diff` **同源**，纯本地零联网。前端「数据源」页新增两次运行选择 + `status_delta` 渲染（新增 / 移除 / 状态 / 拼写同义 / 分期 / 申办方 / 适应症变更）。撤掉 `snapTip` 的「将在下一迭代接入」期货文案，README 待办第 1 条销账。
+- **数据源清单与源健康**：新增 `GET /api/sources`，返回 9 源（Tier / 接入方式）+ 最近一次 `run_status.json` 的真实状态（WHO 降级、CDE 0 命中未确认、自动重试次数）；「数据源与追踪」页由 3 段静态文字改为动态清单 + 健康列表 + diff 面板。
+- **出站披露**：检索表单下方说明 Tier-2 源经第三方统一端点、仅发送公开检索词与非内容元数据（机器哈希 / 技能版本 / 入口 / 语言 / 需求 id），不发送本地文件或保密数据（中英双键）。
+- **清理历史死代码**：0.14.4 移除「命令行对外展示」后遗留的 3 处 `wb-adv-cmd` null-safe 引用（能力对齐检查检出为幽灵 id），已删除。
+
+### P2 · 防复发
+- 新增 `workbench/capability_parity.py`（移植自 ct-literature，适配 `I18N` 字典、`wb-f-*` 控件、`ADV_SPECS` + `_build_cmd`、无 v 前缀版本号）：版本锚点 / i18n parity / DOM 引用闭环 / CLI flag 三选一。6 个未接线 flag 逐条写明 `deprecated` / `internal` / `cli-only` / `api-wired` 分类与理由。
+- 接入 `ctqa.config.json` 的 W0 `skill_tests`；`workbench/README.md` 新增「发布前检查（必跑）」。
+
+### 验证
+- `capability_parity.py` → **PASS（0 fail / 0 warn）**：版本 0.14.5 一致；i18n 296/296；DOM 147 定义 / 50 引用 / 7 控件、0 幽灵；66 个 CLI flag = 60 已接线 / 6 明确豁免 / **0 未判定**。
+- `py_compile`、内联 JS `node --check`（2 blocks / 105111 chars）、ctqa 配置 JSON 解析全通过。
+- 函数级：`_api_sources()` 返回 9 源 + 最近运行 3 个状态键；`_api_diff()` 返回完整 status_delta（52 条）且路径穿越被拒（`invalid_run_id`）。
+- HTTP 冒烟：`/api/config` → 0.14.5；`/api/sources` → 9 源 + latest；`POST /api/diff` → 200 / ok / status_delta 52 条。
+- ⚠️ **线上覆盖部署未执行**（外部发布动作，需单独确认）；发布包已重建，协议见 `references/published_app.md`。
+
+---
+
+## 0.14.5 — 2026-11-06 · 阶段 2 接入 ct-base Excel 交付契约 + 英文交付物零中文
+
+> 关联 ct-base v1.4.45：流程契约层统一，消除本技能内的第二份语言解析实现。
+
+- `scripts/export_xlsx.py` 删除本地 `resolve_report_lang()`，改为 `from xlsx_delivery import resolve_report_lang`（`skill="registry"`）；共享件由 `publish_inject` 注入，已物理复制到 `scripts/` 与 `workbench/publish/scripts/`。
+- **英文模式中文残留修复**：封面标题在 `lang=en` 时只保留英文检索词片段（`Orebatinib / 奥雷巴替尼` → `Orebatinib`），避免 A2 / B10 出现中文；明细表中文数据值按数据保真红线保留。
+- `workbench/server.py::_write_partial_xlsx` 表头与 sheet 名按界面语言切换（zh「部分结果」/ en「Partial Results」），英文界面不再输出中文兜底报告；调用处按 `params.lang` 传参。
+- 验证：独立进程 zh/en 两版逐格扫描，英文版 CJK 单元格 0、中文版四表全中文；`--lang en` / `CT_REGISTRY_LANG=en` 均英文、无 env 的 `auto` 中文；发布包脚本自包含运行通过；`py_compile`、F31 通过。
+- ⚠️ 线上应用仍待重新部署后页面下载才生效。
+
+---
+
+## （端点版本补录）2026-11-04 · coze 端点 0.3.95–0.4.00 历史欠账 + B 类三项上移
+
+> 端点侧版本线（`src/graphs/nodes/_version.py::COZE_VERSION`）与技能版本线（下方 `0.14.x`）是两套独立编号。此前 0.3.95–0.3.99 五次端点改动只写进了 `_version.py` docstring，未进本 CHANGELOG，构成 ct-base §20.19.7 红线 3 的历史欠账，本次一并补齐（摘要真源 = 该文件 docstring）。
+
+### coze 端点 0.3.95 — 2026-10-27 · ct-literature 源码保护上移三策略节点
+- 新增 `lit_route`（PDF 下载路由红线）/ `lit_preprint_check`（预印本作者级同篇校验）/ `lit_dedup`（去重归一化 + PRISMA 组装，engine v1/v2）三节点；`sources.py` 登记 + `search_node.py` 懒加载分支，老客户端不传这些 source 时走默认分支，完全向后兼容。
+- 本地 ct-literature 同步改为纯薄客户端 `adapters/_coze_strategy.py`：coze 不可用时降级为空、**不本地兜底**（源码保护型口径，与 0.4.00 红线 2 保留本地引擎不同）。
+
+### coze 端点 0.3.96 — 2026-10-27 · PDF 解析顺序与质量对齐本地
+- `publisher_pdf_batch_node._oa_via_openalex` 由「PMC→EPMC render 优先」改为与本地 `pdf_download._oa_via_openalex` 逐字对齐的「best_oa/pdf_url 真直链优先、EPMC ?pdf=render 降为最后兜底」；新增 `_is_aux_pdf` 过滤（排除 `_reference.pdf` 参考文献列表被误当全文）。
+- `_do_scrape` / `_do_scrape_oa_url` 的「先探测 EPMC render」下移为最后兜底，减少每篇 1–4 秒无效探测。所有候选仍经 `_probe_direct_download` 验证后才返回，零行为回归。
+
+### coze 端点 0.3.97 — 2026-11-04 · pubmed 车道 + 引文核验节点（P0-A/P0-B）
+- `literature_nodes.py` 新增 `pubmed_node`（NCBI E-utilities，含 strict_keyword 二次检索、hit_count/strict_hit_count 双口径 + provenance 溯源），增强 `europepmc_node`（lit_strict / strict_keyword / query 回显；`total_count` 保持「取回数」语义不变）。
+- 新增 `citation_verify_node`：合并 ct-literature `verify_citations.py` 与 meta-analysis `ref_verify` 两侧能力——DOI/PMID/OpenAlex/CrossRef 四路元数据 + 标题作者一致性 + 三通道撤稿检测，8 项 status 枚举。
+- `state.py` 三模型同声明新增字段；节点均为纯执行器，检索式构造仍留本地。本包仅含服务端节点，客户端 S4 接线属后续步骤。
+
+### coze 端点 0.3.98 — 2026-11-04 · 引文核验作者比对误判修复
+- `citation_verify_node.py::_author_ok` 旧实现把元数据姓氏整体与 work 侧单 token 做 SequenceMatcher，长串被稀释到阈值以下 → 第一作者一致却被误判 mismatch（CheckMate 057 title_ratio=0.949 仍被否）。改为姓氏 token 级双向比对 + 灰区返回 `None`，保留纯姓氏明显矛盾 → `False` 的反幻觉能力；团体署名不作姓氏信号。`selfcheck_citation_verify.py` 增 Q10 回归。
+- 纯服务端逻辑修复，对外契约不变；**本版从未单独打包**。
+
+### coze 端点 0.3.99 — 2026-11-04 · 预印本同篇校验姓氏解析修复 + 部署包
+- `lit_preprint_check_node.py::_surnames` 旧实现 `parts[0] if "," in a else parts[-1]` 对 `"Borghaei H"` / `"Paz-Ares L"` 取到 initial；原文与候选著录格式不同时姓氏集合无交集，真实预印本候选被全部丢弃。现与 ct-literature `preprint_fallback._surnames_from_name` 同源对齐：逗号前取姓、丢弃单字母 initials、NFKD 折叠变音、去标点保留中文。`selfcheck_citation_verify.py` 增 Q11 回归（8 例 _surnames + 2 例 _author_check）。
+- ⚠️ 0.3.98 从未单独打包，故 0.3.98 + 0.3.99 两批修复**合并为同一个 0.3.99 部署包**交付（66 files / ZIP_OK / 逐文件 MD5 一致）。用户确认上传部署后，线上 `lit_preprint_check` canary 实测 `passed=true, reason=ok`，无关作者反例仍拒绝。ct-literature 侧同类本地修复单独完成，不纳入本包。
+
+### coze 端点 0.4.00 — 2026-11-04 · B 类三项上移（本条）
+- 新增 3 个独立 source：`lit_rrf`（RRF 跨源排名融合，纯计算；weights 由客户端显式传，云端刻意不持有 `SOURCE_REGISTRY`；修掉本地 `build_source_ranks` 原地 pop 副作用）、`lit_prisma`（整体上移 `screen_prisma.screen()` + `doc_type_filter.classify_record` 规则表，由专项自检断言 8 张表逐字一致）、`prospero`（只做 `raw_query` 旁路执行器，检索式构造严格留本地；POST 公开检索 + 自造 auth-token + 错误信封识别，后端失败 fail-closed 不伪装 0 命中）。
+- 三者复用既有 `keyword` JSON 通道，`state.py` 三模型零改动；`sources.py` 登记 3 源，`search_node.py` 增 3 条懒加载分支，`selfcheck.py` A1/A2 强制集合 ⇄ 分支一致。
+- 🔴 按 ct-base §20.19.7 红线 2，本地 ct-literature 三份引擎**原样保留**作静默降级兜底：新增 `adapters/_coze_lit_pipeline.py` 编排层（coze 优先 + 本地末位兜底，本地引擎以 `local_fn` 回调注入），`ct_literature.py` 三处调用点接线；`--offline` 老版本分支不接 coze，保持 100% 向后兼容。
+- 严格红线 3 四项同步：端点内新建**检索族适配版契约索引** `tests/coze_cases/_contract_index.json` + `gen_contract_doc.py` → 生成 `adapters/coze/coze_contract.md`（禁手改，24 项校验 + 幂等复跑通过）；版本归因 `_version.py` + `AGENTS.md`；本 CHANGELOG 补五版欠账；F31 双视图同步本次新增条目（既存漂移另立任务）；§20.19.5 实例表新增范畴说明行。
+- ⚠️ PROSPERO 外网可达性部署前未证实：部署后须单独 canary 验响应体，不通则由本地引擎兜底，不拖累另两项纯计算节点。**本版仅本地打包，未上传 / 未部署 / 未 commit / 未 push。**
+
+---
+
+## 0.14.4 — 2026-11-06 · 结果文件（Excel / Markdown）中文化 + 工作台兜底报告排版修复
+
+> 用户反馈：工作台页面下载的 `report.xlsx`「格式是乱的，而且基本上都是英文，没有中文」；同时要求核查上下文提示词（对话式 CLI）链路是否同病，并一并修复。
+
+### 根因
+- **全英文**：`export_xlsx.py` 的 `--lang auto` 直接落 `i18n._current_lang()` → OS locale。线上工作台跑在 en_US 容器里，四张 sheet 名（README / Search Results Summary / Trial Master Table / Raw Details）、表头、KPI 卡片与图表标题全部渲染成英文；本地中文 Windows 复现为正常中文，故问题只在云端出现。抽查线上 `?task=20261104-165648-83c2`（慢阻肺，278 条）确认四表全英文。
+- **格式乱**：① 英文文案普遍长于中文，KPI 卡片 / 字段字典 / 图表标题按中文版式排布后被撑挤；② 超时兜底 `report_partial.xlsx` 是手写的极简 OOXML——表头中英混排（`Phase`）、sheet 名 `Partial`、无冻结 / 筛选 / 表头样式，且 `countries` / `sponsor` 为列表时直接 `str(list)`，单元格出现 `['United States', 'China']` 这类 Python repr。
+- **上下文提示词方式**：对话式 CLI 在本地中文 OS 下产出的 `report.xlsx` 本身是中文（已核验 `out/report.xlsx`），但共用同一个 `--lang auto` 隐患——换到无中文 locale 的沙箱 / 英文系统即退化为英文；`report.md` 章节标题为中英混排。已一并修复。
+
+### 修复
+- **`scripts/export_xlsx.py`**：新增 `resolve_report_lang()`——显式 `--lang` > `CT_REGISTRY_LANG`（工作台注入当前 UI 语言）> 技能根 `config.json language` > 封面标题中文检测 > OS locale > 默认中文；`build()` 始终 `set_lang(...)`。工作台与对话式 CLI 两条链路共用，英文用户仍可显式 `--lang en`。
+- **`workbench/index.html` + `workbench/server.py`**：检索表单随请求下发 `lang`（当前界面语言），后端子进程注入 `CT_REGISTRY_LANG`；页面切 EN 时报告同步切 EN，切 ZH 恒为中文，不再受云容器 locale 影响。
+- **`workbench/server.py::_write_partial_xlsx`**：全中文表头 + 中文 sheet 名「部分结果」、`_partial_text()` 规范化列表值、深蓝表头白字 + 斑马纹 + 冻结首行 + 自动筛选 + 列宽行高，与正式报告同一观感。
+- **`scripts/i18n_skill_messages.json`（新增）**：修正 `xlsx.field.primary_outcome_desc` 的 zh 仍是英文 `Primary Outcome(s)` 的漏译（技能私有词表的正确去处，不改 ct-base 共享件）。
+- **`scripts/report.py`**：Markdown 报告章节标题按 `CT_REGISTRY_LANG` / `--lang` 输出中文（默认）或英文，不再中英混排；数据值保持注册库原文，符合数据保真红线。
+
+### 验证
+- 模拟 en_US locale：语言优先级 8 组用例全通过；线上同款 50 条数据经**发布包脚本**重导出 → sheet 名「说明 / 检索结果概要 / 试验总表 / 原始明细」、表头「登记号 / 标题 / …」、8 张原生图表完整。
+- 显式 `--lang en` 仍输出英文；兜底 xlsx 经 openpyxl 验证中文表头、冻结 `A2`、筛选 `A1:G3`、深蓝表头、列表值 `United States; China`。
+- `py_compile` 全通过；两份内联 JS 改动所在脚本块 `node --check` 通过；主目录与 `workbench/publish/` 发布副本逐文件 MD5 一致（含新增词表）。
+- ⚠️ 线上应用需按 §13.5 Scheme B 用既有 appId 重新发布后生效；本次仅完成代码与发布包修复，未执行部署。
+
+---
+
+## 0.14.3 — 2026-11-03 · `search_ctgov` 补 429/5xx 退避重试（P3 归一反向移植）
+
+> 动机：meta-analysis 的 `registry_probe.py` 与本技能的 `search_ctgov.py` 是同一个源
+> （ClinicalTrials.gov v2 REST）的两套实现。按 ct-base §20.19「coze 后端合并判定框架」
+> 的消除重复原则，meta 侧的检索**执行**层已归一到本模块（P3，2026-11-03）。
+> 本模块原本只有一次生 urlopen（无重试），而 meta 侧的 `_get_json` 具备 429/5xx 退避
+> 重试——直接归一会让该能力静默丢失，违反「融合不丢弃有用功能」，故先反向移植。
+
+### Added
+- **`_fetch_page_urllib(params, timeout=30, max_retries=3, backoff=2.0)`**：urllib 默认路径
+  新增重试（429 尊重 `Retry-After` 头、5xx / URLError / OSError / TimeoutError 指数退避、
+  非 429 的 4xx 不重试、重试耗尽抛 `RuntimeError`）。默认值保持既有行为不变。
+- **`_fetch_page_session(session, params, max_retries=3, backoff=2.0)`**：`--fast` 路径
+  同策略重试（requests 异常按 `response.status_code` 判定可重试性）。
+- **`search()` / `search_fast()` 透传**：新增 `timeout` / `max_retries` / `backoff` 三个可选
+  参数（默认 30 / 3 / 2.0），调用方按需覆盖。
+- **`_wait_seconds(backoff, attempt)`**：指数退避计算；`backoff<=0` 显式返回 0.0——
+  Python 中 `0 ** 0 == 1`，不显式守卫会让 `backoff=0` 变成「等 1 秒」而非「立即重试」。
+- **测试**：`tests/test_search_ctgov_retry.py` **13/13**（零网络；覆盖 429 无/有 Retry-After、
+  5xx 重试、重试耗尽、非 429 的 4xx 不重试、URLError 重试、`backoff=0` 不 sleep、
+  `search`/`search_fast` 参数透传、检索式构造不受影响）。
+
+### 兼容性
+- 完全向后兼容（ct-base §20.11）：三个参数均为 optional 且默认值等价于原行为
+  （单次请求 = `max_retries=1` 的退化，但默认 `max_retries=3` 让瞬时 5xx 现在能自愈，
+  属**行为增强**而非破坏）；`search()` / `search_fast()` 的返回结构未变。
+
+## 0.14.2 — 2026-10-28 · ct-qa 接入补齐（W2I/P3 激活）+ 2 项 P1 i18n 残留修复
+
+### Fixed（P1 · 英文界面中文残留，由新启用的 W2I 层检出）
+- **`#wb-lang` 语言按钮 `title` / `aria-label` 硬编码中文「切换语言」**：切到 EN 后
+  悬停提示与无障碍标签仍是中文。改为 `data-i18n-title="langSwitch"` +
+  `data-i18n-aria="langSwitch"`，并在 zh/en 双字典补 `langSwitch` 键（与 `ctHome` 同机制）。
+- **页脚 ICP 备案号 `沪ICP备06008575号` 被误判为需翻译**：工信部备案号是法定公示原文，
+  任何语言下均须原样展示。给 `<a class="wb-beian">` 加
+  `data-ctqa-allow="icp-beian: …"` 豁免标记（框架侧支持 `[data-ctqa-allow]` 子树豁免）。
+
+### Added（ct-qa 配置补齐，§27.6 强制项）
+- **`layers.enable` 补 `W2I` 与 `P3`**：原仅 `W0/W1/W2B`。`W2I` 是 §27.6 条 2 要求
+  「必须配置声明」的推荐层（缺失＝英文界面零覆盖，上面 2 项 P1 因此长期不可见）；
+  本技能有 `adapters/coze/` 与出站客户端 `extsvc_client.py`，按条 3 属「有出站管线」，
+  必须配 `prompt` 节并启用 `P3`。
+- **新增 `adapters/ctqa_p3_wrapper.py`**（§27.6 条 6 wrapper 模式）：出站构造是
+  `search_ictrp.build_payload(args)`（吃 argparse Namespace，缺属性即 AttributeError），
+  P3 需要 `build_payload(env: dict)`。wrapper 提供「全量默认属性 Namespace（34 个
+  `args.*` 属性）+ env 覆盖 + 深拷贝保护」；`sanitize` 复用出站真实实现
+  `extsvc_client._sanitize_payload`（手机号 / 身份证 / 邮箱三类打码）。
+- **`ctqa.config.json` 补 `prompt` 节**（原为 `"prompt": {}` 空对象）：`build_payload` /
+  `sample_env` / `sanitize` / `sanitize_mode: redact` / `volatile_keys`。
+
+### 验证
+- `python -m ctqa run --skill <ct-registry>`：**PASS 60 / FAIL 0 / WARN 3 / ERROR 0 → 绿灯**。
+  P3 首次激活即 7/7 PASS；W2I 由 FAIL 2 转 PASS 5。
+- 剩余 WARN：`W0-010` 内联 `<style>`（设计允许，tokens.css 已外链）、`W1-005` 事件协议
+  启发式告警、`W2B-018` 资源级 404（静态服务无后端 `/api/*`，环境噪音）。
+
 ## 0.14.1 — 2026-10-26 · §22.24 AI-as-intervention 双轨治理
 
 - **§22.24 P1·l AI-as-intervention 双轨治理框架**（SKILL.md §9）：前瞻性评估+SPIRIT-AI/CONSORT-AI vs 工作流准确性+TRIPOD-AI/ICH E6(R3)（EClinicalMedicine 2026-10）。

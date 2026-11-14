@@ -45,7 +45,7 @@ Every search MUST execute in this order — no skipping, no reordering:
    - Direct sources (CT.gov / EU-CTR / PubChem): free, direct `--run`, not counted against the shared daily quota.
    - External-workflow sources (WHO / CDE / ChiCTR / ISRCTN / DRKS): via the shared endpoint, counted
      **once per demand (`demand_id`)** — WHO+CDE, keyword tweaks, and repeats within one demand all merge
-     to 1, governed by the `usage_guard` daily cap of 100 **demands** (blocks at cap). **Currently free**;
+     to 1, governed by the `usage_guard` daily cap of 1000 **demands** (blocks at cap). **Currently free**;
      the cap exists purely for fair shared-resource use — see README "配额与资源使用". **Token is
      localized, long-lived, no per-use re-sign** (only a rare 403 warrants `--store-token`).
    - **P4 async fire-and-forget (updated 2026-08-11):** the Coze `/run` endpoint returns immediately with
@@ -118,3 +118,61 @@ skill on the user's behalf and must be reviewed.
   by default, auto-switch to Chinese on a Chinese OS; **raw data values (drug names, Chinese class suffixes,
   user-entered terms) are NEVER translated**. `ct_registry.py`'s stop message also uses `_t("kw_gate.stopped")`.
 - Full rules and Manifest schema: see `ct-base/references/keyword_expand.md` (library-wide standard).
+
+
+## CDE en→zh Translation Confirmation Card (endpoint path · 0.5.02)
+
+> **家族统一标准**：本节是 `ct-base/references/bilingual_retrieval.md` §5
+> Translation Confirmation Gate 的 **ct-registry 实例**；分档规则、确认卡格式、
+> 记录契约以 ct-base 标准为准（可调用模板 `ct-base/scripts/translation_gate.py`）。
+> 下文仅保留 CDE 特有细则，与标准冲突时以标准为准。
+
+> Scope: **unified-endpoint direct path** (`search_ictrp.py --source chinadrugtrials`, or the
+> in-endpoint engine). The interactive `ct_registry.py` path is already covered by the
+> Keyword-System Confirmation Gate above (Manifest `per_source.cde` zh terms are confirmed
+> in that menu) — do NOT double-confirm there.
+
+**Background (2026-11-11 field-tested):** CDE is a Chinese-language library — English keywords
+return 0 hits (`keywords=奥希替尼` → 20 rows vs `keywords=osimertinib` → 0). The endpoint now
+auto-translates pure-ASCII keywords via the en→zh reverse map (`_cde_drug_zh.json`, 501 entries,
+fail-open). Because a machine translation can miss/mis-hit, the search result JSON carries a
+`keyword_localization` array, and the dialogue layer MUST present a **translation confirmation
+card** from it.
+
+**Result JSON contract** (per keyword, inside `project_list`):
+
+```json
+"keyword_localization": [
+  {"original": "osimertinib", "localized": "奥希替尼", "candidates": ["奥希替尼"],
+   "mode": "whole", "ambiguous": false}
+]
+```
+
+- `mode`: `whole` 整词命中 / `partial` 多词逐词映射 / `fail_open` 查无映射原样透传 / `native_zh` 本就是中文。
+- `ambiguous: true` = 映射表存在多个中文候选，本次只取了首候选（可能漏检）。
+
+**Dialogue-layer rules (mandatory):**
+
+| 情形 | 动作 |
+|---|---|
+| `mode=native_zh`，或全部 `whole/partial` 且 `ambiguous=false` | **展示确认卡后直接继续**（知会即可，不阻断） |
+| 任一 `ambiguous=true` | **必须停下确认**：列出全部候选让用户选（或另给词），确认后带 `--cde-keyword "<用户选的中文词>"` 重跑 |
+| 任一 `mode=fail_open` 且 `original` 为 ASCII | **必须停下询问**：该英文词未翻译，在 CDE 必然 0 命中——请用户提供中文通用名/商品名，或明确确认「仅用其余词检索」 |
+
+**确认卡格式**（对话与工作台统一使用此 markdown 表）:
+
+```markdown
+### 🔤 CDE 关键词翻译确认
+| 原词 | 中文检索词 | 候选 | 状态 |
+|---|---|---|---|
+| osimertinib | 奥希替尼 | 奥希替尼 | ✅ 已应用 |
+| SGB-9768 | SGB-9768 | — | ⚠️ 未翻译（CDE 0 命中风险，请给中文名） |
+
+请确认或改词后我再重跑 CDE 检索（回车=按上表继续）。
+```
+
+- 展示时机：CDE 检索**返回后**随结果一起展示（翻译在端点内自动发生，前置确认只在
+  `ambiguous/fail_open` 时通过重跑体现）；若用户在 Gate 菜单阶段就想预览映射，可用
+  `--kw-zh` 直接注入已确认中文词集，端点不再触发自动翻译注入差异。
+- 翻译词表来源：`ct-registry/references/drug_name_map.json`（zh→en 正向）反向索引生成于
+  `src/graphs/nodes/_cde_drug_zh.json`；补词请编辑正向表后重新生成反查表。
