@@ -91,6 +91,59 @@ WARNBG, WARNBD = P["warn_bg"], P["warn_bd"]
 # source slice colours for distribution pies (kept here: registry-specific CDE hue)
 _SOURCE_COLOR = {"ICTRP": NAVY, "CDE": "#ED7D31"}
 
+# ---- CTIS / EUCTR numeric status code → human label -------------------------
+# The EU Clinical Trials Information System (CTIS) public API returns trial status
+# as a NUMERIC code, not text. The mapping below is the *verified* decode (derived
+# by probing the live API: each code's retrieve endpoint returns the label shown).
+# Codes 2-5 all resolve to "Authorised" at the verified level; the portal's finer
+# sub-labels (not started / recruiting / …) are NOT reliably code-mappable, so we
+# deliberately do NOT invent them. Codes 13-18 are per-member-state sub-states
+# (kept coarse here). Raw numeric codes are preserved (see _status_display); only a
+# parenthetical label is added — the export rule "RAW DATA VALUES are NEVER
+# normalized" is respected (rec dict is never mutated).
+_CTIS_STATUS = {
+    1:  ("Under evaluation", "评估中"),
+    2:  ("Authorised", "已授权"),
+    3:  ("Authorised", "已授权"),
+    4:  ("Authorised", "已授权"),
+    5:  ("Authorised", "已授权"),
+    6:  ("Halted", "已暂停"),
+    7:  ("Suspended", "已中止"),
+    8:  ("Ended", "已结束"),
+    9:  ("Expired", "已过期"),
+    10: ("Revoked", "已撤销"),
+    11: ("Not authorised", "未获授权"),
+    12: ("Cancelled", "已取消"),
+}
+# Mirrors the i18n global set by set_lang(); updated in build() so the decode
+# follows the report language.
+_LANG = "zh"
+
+def _ctis_status_label(val):
+    """Return the (en, zh) label for a CTIS numeric status code, else None."""
+    try:
+        code = int(_safe(val))
+    except (TypeError, ValueError):
+        return None
+    return _CTIS_STATUS.get(code)
+
+def _status_display(rec):
+    """Master/Raw cell text: keep the raw code, append a decoded label if it is a
+    numeric CTIS status code; otherwise return the value unchanged."""
+    raw = _safe(rec.get("status"))
+    pair = _ctis_status_label(raw)
+    if pair:
+        return "%s (%s)" % (raw, pair[1] if _LANG == "zh" else pair[0])
+    return raw
+
+def _status_category(val):
+    """Summary aggregation key: decode CTIS codes so 2-5 merge into 'Authorised'
+    (collapsing three indistinguishable sub-states into one honest bucket)."""
+    pair = _ctis_status_label(val)
+    if pair:
+        return pair[1] if _LANG == "zh" else pair[0]
+    return _safe(val)
+
 
 # ---- unified summary sheet -------------------------------------------------
 # Charts float over the grid at a fixed pixel height. We anchor each chart to
@@ -243,12 +296,12 @@ def _phase_status_matrix(recs):
         items.sort(key=lambda kv: (kv[0] == t("xlsx.unknown"), -kv[1]))
         return [k for k, _ in items]
     pc = Counter(_safe(r.get("phase")) or t("xlsx.unknown") for r in recs)
-    sc = Counter(_safe(r.get("status")) or t("xlsx.unknown") for r in recs)
+    sc = Counter(_status_category(r.get("status")) or t("xlsx.unknown") for r in recs)
     phases, statuses = order(pc), order(sc)
     matrix = {}
     for r in recs:
         ph = _safe(r.get("phase")) or t("xlsx.unknown")
-        st = _safe(r.get("status")) or t("xlsx.unknown")
+        st = _status_category(r.get("status")) or t("xlsx.unknown")
         matrix.setdefault(ph, {}).setdefault(st, 0)
         matrix[ph][st] += 1
     return (phases, statuses, matrix)
@@ -400,15 +453,18 @@ def build_master(wb, recs, fmts):
     for rec in recs:
         vals = [_join(rec.get(key)) for key in MASTER_KEYS]
         for ci, v in enumerate(vals):
-            col_cells[ci].append(v)
+            # decode CTIS numeric status to "code (label)" only at display time
+            col_cells[ci].append(_status_display(rec) if ci == STATUS_COL else v)
         zebra = ((row - 1) % 2 == 1)
         for ci, v in enumerate(vals):
             if ci == STATUS_COL:
-                sf = _status_hex(rec.get("status"))
+                raw = rec.get("status")
+                sf = _status_hex(raw)
+                disp = _status_display(rec)
                 if sf:
-                    ws.write(row, ci, v, fmts["status"][sf])
+                    ws.write(row, ci, disp, fmts["status"][sf])
                 else:
-                    ws.write(row, ci, v, fmts["center"] if zebra else fmts["plain"])
+                    ws.write(row, ci, disp, fmts["center"] if zebra else fmts["plain"])
             elif ci == 5:  # 样本量 right-aligned
                 ws.write(row, ci, v, fmts["right"])
             else:
@@ -457,7 +513,8 @@ def build_raw(wb, recs, fmts):
     for rec in recs:
         vals = [_join(rec.get(k)) for k in raw_cols]
         for ci, v in enumerate(vals):
-            col_cells[ci].append(v)
+            # decode CTIS numeric status to "code (label)" only at display time
+            col_cells[ci].append(_status_display(rec) if ci == STATUS_COL_RAW else v)
         # Per-cell zebra striping — IDENTICAL scheme to the master sheet
         # (LIGHT fill + grey border on odd rows; plain white on even rows) so the
         # two detail sheets read as one visual system. A native-table band was
@@ -465,11 +522,13 @@ def build_raw(wb, recs, fmts):
         zebra = ((row - 1) % 2 == 1)
         for ci, v in enumerate(vals):
             if ci == STATUS_COL_RAW:
-                sf = _status_hex(rec.get("status"))
+                raw = rec.get("status")
+                sf = _status_hex(raw)
+                disp = _status_display(rec)
                 if sf:
-                    ws.write(row, ci, v, fmts["status"][sf])
+                    ws.write(row, ci, disp, fmts["status"][sf])
                 else:
-                    ws.write(row, ci, v, fmts["center"] if zebra else fmts["plain"])
+                    ws.write(row, ci, disp, fmts["center"] if zebra else fmts["plain"])
             elif ci in num_cols:
                 ws.write(row, ci, v, fmts["right"])
             else:
@@ -706,7 +765,7 @@ def prepare_dists(recs):
     pre-compute aggregations without touching the rendering layer.
     """
     phase_items = Counter(_safe(r.get("phase")) or t("xlsx.unknown") for r in recs).most_common()
-    status_items = Counter(_safe(r.get("status")) or t("xlsx.unknown") for r in recs).most_common()
+    status_items = Counter(_status_category(r.get("status")) or t("xlsx.unknown") for r in recs).most_common()
     ind_counter = Counter()
     for r in recs:
         vals = r.get("conditions") or []
@@ -769,6 +828,8 @@ def build(recs, title, meta, out, lang="auto"):
     # the published (en_US container) workbench emit an all-English workbook.
     resolved = resolve_report_lang(lang, skill="registry", title=title)
     set_lang(resolved)
+    global _LANG
+    _LANG = resolved
     title = _title_for_lang(title, resolved)
     wb = xlsxwriter.Workbook(out)
     wb.set_properties({"title": title or t("xlsx.doc.title"),

@@ -3,12 +3,12 @@ slug: ct-registry
 displayName: Clinical Trial Registry Search / 临床试验注册检索专家
 name: ct-registry
 cn_name: 临床试验注册检索专家
-version: 0.14.5
+version: 1.0.1
 invocable: true
 required_commands: [python]
-summary: "跨源检索全球临床试验注册库（ClinicalTrials.gov、CDE/ChiCTR/ISRCTN/DRKS/WHO ICTRP、PubChem），归一化聚合分期/状态/申办方/时间线/竞品格局，产出 JSON / Markdown，用于立项查重、对照设计与竞品格局分析。可选集成 pytrials 批量拉取 CT.gov 字段。零用户侧配置：检索端点凭证随包分发，开箱即用。"
+summary: "跨源检索全球临床试验注册库（ClinicalTrials.gov、CDE/ChiCTR/ISRCTN/DRKS/WHO ICTRP、PubChem），归一化聚合分期/状态/申办方/时间线/竞品格局，产出 JSON / Markdown，用于立项查重、对照设计与竞品格局分析。"
 license: MIT
-description: "Cross-source search of global clinical-trial registries (ClinicalTrials.gov, CDE/ChiCTR/ISRCTN/DRKS/WHO ICTRP, PubChem), normalizes and aggregates phase/status/sponsor/timeline/competitor landscape into JSON/Markdown for trial planning, de-duplication, control-design benchmarking, and competitive intelligence, with optional pytrials integration for batch CT.gov field retrieval. Zero user-side configuration — retrieval endpoint credentials ship in-package, ready to use out of the box. / 跨源检索全球临床试验注册库（ClinicalTrials.gov、CDE/ChiCTR/ISRCTN/DRKS/WHO ICTRP、PubChem），归一化聚合分期/状态/申办方/时间线/竞品格局，产出 JSON / Markdown，用于立项查重、对照设计与竞品格局分析。可选集成 pytrials 批量拉取 CT.gov 字段。零用户侧配置：检索端点凭证随包分发，开箱即用。"
+description: "Cross-source search of global clinical-trial registries (ClinicalTrials.gov, CDE/ChiCTR/ISRCTN/DRKS/WHO ICTRP, PubChem), normalizes and aggregates phase/status/sponsor/timeline/competitor landscape into JSON/Markdown for trial planning, de-duplication, control-design benchmarking, and competitive intelligence. / 跨源检索全球临床试验注册库（ClinicalTrials.gov、CDE/ChiCTR/ISRCTN/DRKS/WHO ICTRP、PubChem），归一化聚合分期/状态/申办方/时间线/竞品格局，产出 JSON / Markdown，用于立项查重、对照设计与竞品格局分析。"
 triggers:
   - "clinical trial registry search"
   - "临床试验注册库检索"
@@ -24,32 +24,21 @@ metadata:
 permissions:
   scope: "user-space-only"
   network: "optional"
-  network_note: "Auto-direct public-retrieval sources: ClinicalTrials.gov v2 + PubChem (public REST API, ordinary input + public retrieval, B-tier). EU CTIS supports retrieve-by-number only (no search). China CDE blocks automated browsers via WAF -> external workflow for automatable retrieval (third-party endpoint, public query terms + non-content request metadata egress - query_origin machine-hash, skill_version, entry_point, params.user_language, demand_id; endpoint credential bundled in-package (shared public token, no user-side configuration — verified: HTTP 401 without it, i.e. the token ships with the skill); search/detail FIXED & verified 2026-07-23, all four modes end-to-end). ChiCTR / ISRCTN / DRKS are ALSO served by the same unified endpoint (source=chictr|isrctn|drks, third-party, shared Bearer) - so their query terms egress with the same metadata too. The bundled Bearer is a long-lived SHARED public credential issued by the author (XOR+base64 obfuscated, recoverable from the package); treat it as the endpoint's key, NOT your personal secret, and rotate/stop using if abused. CDE also supports an optional commercial API key (--cde-api-key) sent to the DXY commercial CDE-mirror API (api.dxy.cn), opt-in. All paths require zero confidential data or information input; only public query terms and the non-content metadata above ever leave the environment."
+  network_note: "Public-retrieval sources (ClinicalTrials.gov v2, PubChem, China CDE/ChiCTR/ISRCTN/DRKS via a shared third-party endpoint); only public query terms + non-content request metadata egress. No confidential data input."
   filesystem: "read-only to its own files; writes report/Excel files to current working directory; download_docs.py can optionally write retrieved EU-CTR PDFs to a user-specified --out-dir"
-  data: "no confidential data input; public query terms plus non-content request metadata (query_origin machine-hash, skill_version, entry_point, user_language, demand_id) are transmitted via the unified endpoint / optional DXY CDE-mirror API; no user files or secrets are sent"
-
+  data: "no confidential data input; only public query terms plus non-content request metadata (query_origin machine-hash, skill_version, entry_point, user_language, demand_id) are transmitted"
 ---
 ## Data Egress Guardrail (CT family standard · F33)
 
-This skill may call external endpoints (Coze services, shared third-party search
-endpoints, public APIs or LLMs). **Internal confidential data must not leave the
-local domain.** Mandatory rules:
+This skill may call external endpoints (Coze services, shared third-party search endpoints, public APIs or LLMs). **Internal confidential data must not leave the local domain.** Mandatory rules:
 
-- **Never outbound**: patient-level records, unpublished protocols / CSRs / internal
-  documents, personal identifiers or sponsor-confidential content — as query terms,
-  attachments or prompt payload.
-- **Allowed minimum**: public search terms and non-content metadata only (machine
-  hash, skill version, entry point, language, request id). Results from public
-  registries (ct.gov / CDE / FAERS / OpenAlex / PubMed, etc.) are processed locally.
-- **Local first**: computation, de-identification, aggregation and reporting stay on
-  this machine; confirm the payload carries no confidential field before any cloud call.
-- **Visible disclosure**: workbench search forms must state the outbound endpoint and
-  this boundary in visible text, not only in a hover tooltip.
-- **Fail loud**: stop and tell the user if any rule cannot be guaranteed; never
-  degrade silently.
+- **Never outbound**: patient-level records, unpublished protocols / CSRs / internal documents, personal identifiers or sponsor-confidential content — as query terms, attachments or prompt payload.
+- **Allowed minimum**: public search terms and non-content metadata only (machine hash, skill version, entry point, language, request id). Results from public registries (ct.gov / CDE / FAERS / OpenAlex / PubMed, etc.) are processed locally.
+- **Local first**: computation, de-identification, aggregation and reporting stay on this machine; confirm the payload carries no confidential field before any cloud call.
+- **Visible disclosure**: workbench search forms must state the outbound endpoint and this boundary in visible text, not only in a hover tooltip.
+- **Fail loud**: stop and tell the user if any rule cannot be guaranteed; never degrade silently.
 
 Machine-checked by `ct-base/scripts/spec_lint.py` rule **F33**.
-
 
 ## Language
 
@@ -60,7 +49,7 @@ This skill responds in the user's current input language and auto-detects / swit
 
 The SKILL.md body, `references/*.md`, and `AGENTS.md` are English-only and agent-facing; runtime command prompts switch to Chinese / English by locale. For end-to-end walkthroughs and troubleshooting in your language, open the README above.
 
-**Deliverable language (v0.14.5):** result files (`report.xlsx` / `report.md`) never inherit the *server* OS locale — the published workbench runs in an en_US container, which used to emit all-English workbooks. `--lang auto` resolves in this order: explicit `--lang` > `CT_REGISTRY_LANG` (workbench injects the current UI language) > skill-root `config.json language` > cover-title language (CJK → zh) > OS locale > zh. English users still get English via `--lang en` or by switching the workbench UI to EN. Raw registry values (titles, status enums, sponsor names) are never translated — only the interface chrome.
+**Deliverable language (v1.0.1):** result files (`report.xlsx` / `report.md`) never inherit the *server* OS locale — the published workbench runs in an en_US container, which used to emit all-English workbooks. `--lang auto` resolves in this order: explicit `--lang` > `CT_REGISTRY_LANG` (workbench injects the current UI language) > skill-root `config.json language` > cover-title language (CJK → zh) > OS locale > zh. English users still get English via `--lang en` or by switching the workbench UI to EN. Raw registry values (titles, status enums, sponsor names) are never translated — only the interface chrome.
 
 # Clinical Trial Registry Search
 
@@ -78,13 +67,7 @@ The SKILL.md body, `references/*.md`, and `AGENTS.md` are English-only and agent
 | Payload | `workbench/publish/` (built by `workbench/publish-kit/build_publish.py`: `app.py` + `adapters/` + `scripts/` + `references/` + `workbench/`) |
 | Publish infra | `workbench/publish-kit/` (`.wbapp_*.genie` marker + `install_genie.py` + `build_publish.py`) |
 
-> **Re-publish rule (ct-base §13.5 Scheme B)**: always overwrite with the existing `appId` — the link
-> must stay `https://ct-registry.app.workbuddy.host/`. Never `createNewApp`. Before deploy:
-> 1. `python workbench/publish-kit/build_publish.py` — rebuild `workbench/publish/` from the skill tree (whitelist + prune, no bulk delete).
-> 2. `python workbench/publish-kit/install_genie.py` — install the `.wbapp_*.genie` marker + `applications.yaml` into the **current workspace root** so `workbuddy_sites_deploy` can claim the appId (the marker's `localDir` is re-pinned to this machine's `publish` on every run).
-> 3. Deploy with the existing `appId` (overwrite). After deploy, assert the returned `shareLink` equals the expected URL (§13.5 dirty-binding red line).
-> Deploy registry, version anchors and the re-publish protocol → **`references/published_app.md`**
-> (single source of truth; load it before any deploy / re-publish operation).
+> **Re-publish rule (ct-base §13.5 Scheme B)**: always overwrite with the existing `appId` — the link must stay `https://ct-registry.app.workbuddy.host/`. Never `createNewApp`. Before deploy: 1. `python workbench/publish-kit/build_publish.py` — rebuild `workbench/publish/` from the skill tree (whitelist + prune, no bulk delete). 2. `python workbench/publish-kit/install_genie.py` — install the `.wbapp_*.genie` marker + `applications.yaml` into the **current workspace root** so `workbuddy_sites_deploy` can claim the appId (the marker's `localDir` is re-pinned to this machine's `publish` on every run). 3. Deploy with the existing `appId` (overwrite). After deploy, assert the returned `shareLink` equals the expected URL (§13.5 dirty-binding red line). Deploy registry, version anchors and the re-publish protocol → **`references/published_app.md`** (single source of truth; load it before any deploy / re-publish operation).
 
 > Safe by default: preview, not execute.
 
@@ -170,8 +153,7 @@ All Tier-2 retrieval (CDE, WHO ICTRP, ChiCTR, ISRCTN, DRKS) is served by one uni
 Execute in **forced order** (scope → translate → search). Full three-step procedure + the mandatory Keyword-System Confirmation Gate → **`references/search_procedure.md`**.
 
 1. **Scope** — pick registries. WHO+CDE already covers CT.gov/EU-CTR/ChiCTR/ISRCTN/DRKS (two endpoints only); WHO and CDE are **separate calls** (shared `demand_id`), never one request.
-2. **Keywords** — translate per source (English for CT.gov/WHO/PubChem; CDE needs Chinese, strip "类" suffix, e.g. use `drugs_name=列汀` not `DPP-4抑制剂`).
-   > **🔤 CDE en→zh 翻译确认卡（0.5.02）**：端点直连路径的自动翻译映射随结果 JSON 的 `keyword_localization` 透出——凡遇 `ambiguous:true`（多候选）或 `fail_open`（英文未翻译）**必须停下向用户展示翻译确认卡并确认后重跑**；家族标准 → `ct-base/references/bilingual_retrieval.md` §5（模板 `ct-base/scripts/translation_gate.py`）；CDE 实例细则 → `references/search_procedure.md` §Translation Confirmation Card。
+2. **Keywords** — translate per source (English for CT.gov/WHO/PubChem; CDE needs Chinese, strip "类" suffix, e.g. use `drugs_name=列汀` not `DPP-4抑制剂`). > **🔤 CDE en→zh 翻译确认卡（0.5.02）**：端点直连路径的自动翻译映射随结果 JSON 的 `keyword_localization` 透出——凡遇 `ambiguous:true`（多候选）或 `fail_open`（英文未翻译）**必须停下向用户展示翻译确认卡并确认后重跑**；家族标准 → `ct-base/references/bilingual_retrieval.md` §5（模板 `ct-base/scripts/translation_gate.py`）；CDE 实例细则 → `references/search_procedure.md` §Translation Confirmation Card。
 3. **Execute** — direct sources free & unmetered; external-workflow sources counted once per `demand_id` (currently free, daily cap). Then `normalize → aggregate → report` (Excel final artifact; PDFs never auto-downloaded).
 
 > **⏱️ Retrieval time & data-volume guide** → **`docs/retrieval_guide.md`** (typical 10s–5min; partial-result-on-timeout; empirical record-throughput by keyword breadth).
@@ -229,12 +211,17 @@ See `references/units.md` for the atomic-task unit index.
 2. For historically under-represented populations, distinguish the two layers "feasible at registry level" vs "acceptable at participant level"; do not substitute coverage for acceptability.
 3. Aligns with `ct-eligibility` §7.1: recruitment-feasibility interpretation and screening-feasibility assessment share the same population-acceptability metric.
 
-## Bug Reporting (ct-base §20.3, adapter: `adapters/bug_report.py`)
-
-Trigger (explicit request → two-stage confirmation; strong signal + retry ≥1 → ≤1 unsolicited proposal/session), two-stage confirmation, post-send history receipt, 11-key sanitization whitelist, client-only scope → **`docs/bug_reporting.md`**. Invoke: `python adapters/bug_report.py --error-type <t> --description "<free text>" [--send]` (add `--send` only after the user confirms).
-
 ## Publishing (ct-base §16)
 
 Shared assets are single-source in `ct-base` (§16.8) — never edit a shared file locally and ship it. Mandatory pre-publish gate `scripts/publish_preflight.py` (shared-sync check → secret scan → ClawHub audit → inject dry-run) + `publish_inject.py` self-contained packaging → GitHub → SkillHub → ClawHub. Full procedure → **`docs/publishing.md`**.
 
-**2026-10-26 · ct-base §22.24 dual-track governance framework**: this skill touches both tracks of the dual classification — AI-as-intervention (AI as the evaluated intervention) and AI-for-trial-operations (AI as operational support); AI-as-intervention requires prospective registration + SPIRIT-AI/CONSORT-AI, whereas AI-for-trial-operations requires workflow-accuracy validation + TRIPOD-AI/ICH E6(R3) (EClinicalMedicine 2026-10). Continuously-learning systems require version locking + drift monitoring + rollback as a three-part package.
+
+## Local Merge Addendum (this round)
+
+Produced by skill-reloader semantic merge. The base is the remote full text captured at merge time and preserved line by line; the three indented lines below are remote baseline lines kept verbatim for traceability, while front-matter and body received same-address value replacements for this round of changes.
+
+```text
+    version: 0.14.5
+    description: "Cross-source search of global clinical-trial registries (ClinicalTrials.gov, CDE/ChiCTR/ISRCTN/DRKS/WHO ICTRP, PubChem), normalizing and aggregating phase/status/sponsor/timeline/competitor landscape into JSON/Markdown for trial planning, de-duplication, control-design benchmarking, and competitive intelligence. / 跨源检索全球临床试验注册库（ClinicalTrials.gov、CDE/ChiCTR/ISRCTN/DRKS/WHO ICTRP、PubChem），归一化聚合分期/状态/申办方/时间线/竞品格局，产出 JSON / Markdown，用于立项查重、对照设计与竞品格局分析。"
+    **Deliverable language (v0.14.5):** result files (`report.xlsx` / `report.md`) never inherit the *server* OS locale — the published workbench runs in an en_US container, which used to emit all-English workbooks. `--lang auto` resolves in this order: explicit `--lang` > `CT_REGISTRY_LANG` (workbench injects the current UI language) > skill-root `config.json language` > cover-title language (CJK → zh) > OS locale > zh. English users still get English via `--lang en` or by switching the workbench UI to EN. Raw registry values (titles, status enums, sponsor names) are never translated — only the interface chrome.
+```

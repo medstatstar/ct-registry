@@ -2483,5 +2483,166 @@
       "class_enum": [],
       "speculative": []
     }
+  },
+  "00bc153f87a50bdcd65cbb33a75dd256": {
+    "base": "oncology",
+    "intent": "intervention",
+    "zh": [],
+    "en": [
+      "oncology"
+    ],
+    "per_source": {
+      "ctgov": {
+        "lang": "en",
+        "keywords": [
+          "oncology"
+        ],
+        "note": "精确匹配 → 类别/靶点族枚举具体药名；裸类别易漏"
+      },
+      "who": {
+        "lang": "en",
+        "keywords": [
+          "oncology"
+        ],
+        "note": "同 CT.gov；结构化须填具体药名"
+      },
+      "cde": {
+        "lang": "zh",
+        "keywords": [],
+        "note": "子串匹配，多词兜底"
+      },
+      "chictr": {
+        "lang": "zh",
+        "keywords": [],
+        "note": "子串匹配，多词兜底"
+      }
+    },
+    "risks": [
+      "未识别为药物类别，按疾病/干预词直接中英互译检索"
+    ],
+    "confidence": {
+      "term_map": [
+        "oncology"
+      ],
+      "alias": [],
+      "class_enum": [],
+      "speculative": []
+    }
+  },
+  "ecf75234c3edfd97bfef17d5578081af": {
+    "base": "osimertinib",
+    "intent": "drug",
+    "zh": [
+      "奥希替尼",
+      "泰瑞沙"
+    ],
+    "en": [
+      "osimertinib",
+      "tagrisso"
+    ],
+    "per_source": {
+      "ctgov": {
+        "lang": "en",
+        "keywords": [
+          "osimertinib",
+          "tagrisso"
+        ],
+        "note": "精确匹配 → 类别/靶点族枚举具体药名；裸类别易漏"
+      },
+      "who": {
+        "lang": "en",
+        "keywords": [
+          "osimertinib",
+          "tagrisso"
+        ],
+        "note": "同 CT.gov；结构化须填具体药名"
+      },
+      "cde": {
+        "lang": "zh",
+        "keywords": [
+          "奥希替尼",
+          "泰瑞沙"
+        ],
+        "note": "子串匹配，多词兜底"
+      },
+      "chictr": {
+        "lang": "zh",
+        "keywords": [
+          "奥希替尼",
+          "泰瑞沙"
+        ],
+        "note": "子串匹配，多词兜底"
+      }
+    },
+    "risks": [
+      "未识别为药物类别，按疾病/干预词直接中英互译检索"
+    ],
+    "confidence": {
+      "term_map": [
+        "osimertinib",
+        "tagrisso",
+        "奥希替尼",
+        "泰瑞沙"
+      ],
+      "alias": [],
+      "class_enum": [],
+      "speculative": []
+    }
+  },
+  "1e172c326e115f6b44b49324362aa209": {
+    "base": "non-small cell lung cancer",
+    "intent": "disease",
+    "zh": [
+      "NSCLC",
+      "非小细胞肺癌"
+    ],
+    "en": [
+      "non-small cell lung cancer"
+    ],
+    "per_source": {
+      "ctgov": {
+        "lang": "en",
+        "keywords": [
+          "non-small cell lung cancer"
+        ],
+        "note": "精确匹配 → 类别/靶点族枚举具体药名；裸类别易漏"
+      },
+      "who": {
+        "lang": "en",
+        "keywords": [
+          "non-small cell lung cancer"
+        ],
+        "note": "同 CT.gov；结构化须填具体药名"
+      },
+      "cde": {
+        "lang": "zh",
+        "keywords": [
+          "NSCLC",
+          "非小细胞肺癌"
+        ],
+        "note": "子串匹配，多词兜底"
+      },
+      "chictr": {
+        "lang": "zh",
+        "keywords": [
+          "NSCLC",
+          "非小细胞肺癌"
+        ],
+        "note": "子串匹配，多词兜底"
+      }
+    },
+    "risks": [
+      "未识别为药物类别，按疾病/干预词直接中英互译检索"
+    ],
+    "confidence": {
+      "term_map": [
+        "NSCLC",
+        "non-small cell lung cancer",
+        "非小细胞肺癌"
+      ],
+      "alias": [],
+      "class_enum": [],
+      "speculative": []
+    }
   }
 }

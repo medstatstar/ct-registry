@@ -435,6 +435,26 @@ def check_embed(ctx, rep):
 
 
 # ── C3 窄屏守卫 ─────────────────────────────────────────────────────────────
+def _narrow_bottom_tab_hits(css):
+    """窄屏（≤768px）媒体块内，侧栏导航被改为底部固定 Tab 的反模式命中。
+
+    统一规范 §5.6.2（2026-11-15 收敛，范本 ct-safety）：窄屏侧栏须为**顶部横排菜单条**，
+    禁止 `position:fixed;bottom:0`（或 `top:auto` 后 `bottom:0`）的「底部 Tab」旧形态。
+    """
+    hits = []
+    for cond, body in media_blocks(css):
+        mw = re.search(r"max-width\s*:\s*(\d+)", cond)
+        if not mw or int(mw.group(1)) > 768:
+            continue
+        for rm in re.finditer(
+                r"(?:\.wb-side|\.wb-nav)(?:\.[A-Za-z0-9_-]+|\[[^\]]*\])*[^{]*\{[^{}]*\}", body):
+            b = rm.group(0)
+            if re.search(r"position\s*:\s*fixed", b) and re.search(r"bottom\s*:\s*0", b) \
+                    and not re.search(r"top\s*:\s*0(?:\s*px)?", b):
+                hits.append(b[:72])
+    return hits
+
+
 def check_responsive(ctx, rep):
     """规则 2 要求「媒体查询内」有方向切换，其余在全文命中即可（家族写法不一）。
 
@@ -464,6 +484,13 @@ def check_responsive(ctx, rep):
     else:
         rep.add("C3 窄屏守卫规则", OK,
                 "%d 条全部在位%s" % (len(rules), "" if has_side else "（无侧栏页：侧栏两条不适用）"))
+
+    if has_side:
+        bt = _narrow_bottom_tab_hits(css)
+        if bt:
+            rep.add("C3 窄屏守卫规则", _LEVEL_C3, "侧栏窄屏被改为底部 Tab（反模式）",
+                    "§5.6.2：窄屏统一为顶部横排菜单条，删除 768px 块内对 .wb-side/.wb-nav 的 "
+                    "position:fixed;bottom:0 / top:auto 写法（例如：%s）" % bt[0])
 
 
 # ── C9 顶栏窄屏触控重声明（§5.2）───────────────────────────────────────────

@@ -1,6 +1,29 @@
 # Changelog
 
 
+## 1.0.1 · 2026-11-15 · 工作台三处线上缺陷修复（空态图标 / 端口自查 / 顶栏按钮）
+
+基于 1.0.0 上线后的真实用户反馈与覆盖部署实测，修三处**只在具体环境条件下才暴露**的缺陷。功能与接口契约不变，均属健壮性修复：
+
+- **首屏空态图标爆炸**（用户反馈「全新进入时检索结果区显示错误」）：空态 SVG 只写 `viewBox`、无内联尺寸，尺寸完全依赖 `tokens.css` 的 `.wb-empty-ic svg{width:100%}` + 父级 30px。CSS 未加载/命中旧缓存时 SVG 回退撑满容器，实测放大到 **1176×1176**，把「尚无检索结果」文案挤出可视区。修复：空态 SVG 补 `width="30" height="30"` 内联兜底（CSS 正常时仍以 100% 覆盖，视觉不变）。
+- **覆盖部署启动自杀**（部署回执 `SITES_START_FAILED / 端口 3000 已被占用`）：`server.py` 的 `_port_free()` 用裸 socket（未设 `SO_REUSEADDR`）做「端口占用即退出」自查，覆盖部署时旧连接处于 `TIME_WAIT`，裸 socket bind 失败被误判为占用 → `SystemExit(1)`；而真正服务的 `ThreadingHTTPServer` 默认 `allow_reuse_address=True`，本可正常 bind。修复：移除该误判自查，交给 bind 自然失败 + 平台重启。
+- **顶栏「反馈」「CT 首页」格式错乱**（用户反馈「右上角这两个按钮格式仍然不对」）：顶栏四控件中 `.wb-lang`（EN）与 `.wb-topbar .wb-pill`（已就绪）内联已写 `background:transparent` 兜底，**唯独 `.wb-topbar .wb-btn` 只覆盖了尺寸**，配色 100% 依赖 `tokens.css` 的 `:root[data-brand="ct-tier-a"]` 段。当 `--wb-panel` 可用而品牌档规则缺席（旧版 CSS 缓存 / 加载不全）时，这两个按钮回退到 `.wb-btn{background:var(--wb-panel)}` —— 蓝顶上的白底墨字方块。修复（逐项对齐 ct-base 权威模板）：① 内联补 `.wb-topbar .wb-btn` 及 `:hover` 的 ghost 全套；② `.wb-topbar .wb-pill` 描边改 `--wb-topbar-hairline`、补 `min-height:34px`（原 33px，与按钮差 1px 不齐）；③ 两图标 `stroke-width` 1.8 → 2.0（与 EN 一致）、CT 首页房子 path 换模板同款、补内联 `width/height="18"`；④ `#wb-bug` 补 `title` / `aria-label`，`#wb-cthome` 补 `aria-label`；⑤ `tokens.css` 引用加 `?v=20261115b` 版本号，断掉用户旧缓存。
+
+**版本锚点统一 `1.0.1`**：`SKILL.md` frontmatter 与正文 `Deliverable language`、`README.md` / `README_zh-CN.md` 页脚、`AGENTS.md` 标题、`workbench/workbench.config.json`、`workbench/app.config.json`、`workbench/index.html` 内嵌配置兜底、`references/published_app.md` Version anchors 与冒烟清单、本条首记录；`workbench/publish/` 载荷按 Re-publishing protocol 重跑 `build_publish.py`。
+
+**验证**：本地 Playwright 双场景（正常加载 / 拦截 `tokens.css` 并删掉 A·AB 档 ghost 块模拟旧版缓存）——四控件底色均 `transparent`、高度均 34px、图标均 18×18，两场景结果一致；空态图标 CSS 正常与缺失两场景均锁 30×30。线上实测：顶栏四控件 `top` 全为 18 齐平、空态图标 30×30、`/api/health` 返回 `mock:false`、console 无错误；`tokens.css?v=20261115b` 返回 200 / 51,712B。发布闸门：PRE / SECURITY（P0=0 / P1=0）/ POST 全 PASS，前端 8 资源字节级 MATCH。
+
+## 1.0.0 · 2026-11-15 · 首个正式发布版（发布准备）
+
+对齐 ct-base §16 与 Ct-Update 发布审计后升版 `0.14.5` → `1.0.0`。本次实质变更集中在文档规范与交付卫生，**功能层不变**：
+
+- **README 案例按 ct-base §13 全面重写**：中英双版删除 6 个编造式「概要 / 示意」案例，改为 2 个双通道实跑案例（对话通道 CLI + 工作台通道 `/api/plan` / `/api/search` / `/api/download`）；章节重排为「两种使用入口 → 能力一览 → 使用案例 → 数据源与状态」；每案例具备「你这样说 / 助手会这样回 / 🖥️ 工作台」三要素；中文真源、英文逐句直译、数值集合同源；案例区技术细节零披露。劣势场景（中文表单 0 命中、WHO+CDE 全球检索回落、PubChem 双通道不一致）按 §13.21 淘汰并留实跑痕迹。
+- **`SKILL.md` frontmatter `description` 与 `summary` 对齐**：中文段逐字一致，英文段删除 pytrials / Zero user-side 旧句，保持「英文在前 / 中文在后 + ` / ` 分隔」；正文与历史 CHANGELOG 中的 pytrials 功能说明属非 frontmatter 历史记录，未动。
+- **冗余文件清理**：按精确白名单移除 94 个文件 / 13.47 MB（历史部署 zip、`.bak_*` 备份、`runs/` 运行时产物、`__pycache__`、临时脚本等），完整备份 + 逐文件 MD5 复核 + 回收站分批删除，0 残留；`workbench/publish/` 发布载荷、`.gitignore` / `.clawhubignore`、Coze 部署包均保留。
+- **版本锚点统一 `1.0.0`**：`SKILL.md` frontmatter 与正文 `Deliverable language`、`README.md` / `README_zh-CN.md` 页脚、`AGENTS.md` 标题、`workbench/workbench.config.json`、`workbench/app.config.json`、`workbench/index.html` 内嵌配置兜底、`references/published_app.md` Version anchors 与冒烟清单、本条首记录；`workbench/publish/` 载荷按 Re-publishing protocol 重跑 `build_publish.py`（85 文件 / 1.53 MB / PRUNED 0），源与载荷关键文件逐字节一致。
+
+**验证**：`spec_lint.py` ERROR 0（WARN 5，均为存量软上限）；`shared_sync_check.py` 漂移 0 / exit 0；`capability_parity.py` PASS（0 fail / 0 warn，version anchors 1.0.0）；`publish_gate.py` P0=0 / P1=0（WARN 2：SEC7 安全头、GZIP 待部署后带 `--app-url` 复核）；`publish_parity_check.py` DRIFT 0；`registry.py check` PASS。完整清单见 `ct-registry-release-1.0.0-check-20261115.md`。
+
 ## 0.14.5 · 2026-11-14 · 对照 ct-base v1.4.46 最新工作台界面规范整改
 
 按 2026-11-14 晚间 ct-base 规范批次（§19.2 顶栏 `color-mix` 实底配方、§30.9 ④ 主内容区显式背景、§30-⑤ 白裸值废止、§32.5 状态三态色值、§11.8 窄屏 44px）整改 `workbench/index.html` 与 `workbench/wb-list.css`：

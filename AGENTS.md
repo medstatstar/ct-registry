@@ -1,4 +1,4 @@
-# AGENTS.md — ct-registry v0.14.5
+# AGENTS.md — ct-registry v1.0.1
 
 ## Overview
 

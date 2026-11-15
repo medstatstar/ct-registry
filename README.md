@@ -23,97 +23,7 @@
 | **① In conversation** | Any need — vague, complex, or follow-up detail | Just speak plainly in WorkBuddy; the assistant decides sources / keywords / mode for you |
 | **② On the web workbench** | Point-and-click users who prefer a form | Pick registries, fill the fields, click search — same results, same exports |
 
-Both entries run the same retrieval pipeline. Examples below use the conversation entry; each one also shows how to do it on the workbench.
-
----
-
-## Entry ① · Describe your need in conversation
-
-Just describe what you need in plain language. The assistant auto-decides which registries, which keywords (it localizes CN/EN for you), and which retrieval mode — you never pick flags yourself. Below are real examples from simple to complex.
-
-### Example 1 · Single-source scoped search
-**You say:**
-> Search Pfizer's phase 3 oncology trials registered since 2022, CT.gov only.
-
-**Assistant replies (sketch):**
-> Recognizes a single-source scope, queries ClinicalTrials.gov v2 directly, normalizes phase / status / sponsor, and returns a ranked table (count, scope, sample rows) plus a homepage link per trial.
-
-**How to trigger real computation:**
-> Safe preview prints "single-source: CT.gov"; say "run it" to execute. Single-source skips the WHO global mirror — faster and more focused.
-**🖥️ Workbench:** **当前检索 / Current search** → *Intervention / drug* `oncology` (or your drug term), *Sponsor* `Pfizer`, *Recruitment status* `All`, *Last N years* `4` (covers 2022 onwards), and tick **only** ClinicalTrials.gov under *Registries* → click **检索注册库 / Search registries**. The result table lists every trial with its registry homepage link.
-
-### Example 2 · Default global search (WHO ICTRP 14+ registries + China CDE)
-**You say:**
-> Find trials on 奥希替尼 (osimertinib) in non-small-cell lung cancer.
-
-**Assistant replies (sketch):**
-> Defaults to WHO ICTRP (one call mirrors 14+ primary registries: CT.gov, EU-CTR, ISRCTN, DRKS, ChiCTR, jRCT, ANZCTR, CTRI …) plus an independent China CDE search (to catch Chinese-registered trials), merged into one global landscape (e.g. WHO mirror 706 + CDE 2057 → 2763 records) with a phase / status / sponsor breakdown.
-
-**How to trigger real computation:**
-> Safe preview prints the search scope (default global + CDE); say "run it" to execute. No need to ask for "global" explicitly — that's the default. To limit to a single source (e.g. CT.gov only), state it explicitly in the conversation.
-**🖥️ Workbench:** **当前检索 / Current search** → *Intervention / drug* `osimertinib / 奥希替尼`, *Disease / condition* `non-small-cell lung cancer` → tick **WHO ICTRP** and **CDE 中国 / China CDE** (the default global pair) → click **检索注册库 / Search registries**. Both sources are merged into one landscape with the phase / status / sponsor breakdown.
-
-### Example 3 · Complex — multi-parameter CDE routing menu
-**You say:**
-> Search CDE for 化学药物 (chemical drug) 帕博利珠单抗 in 非小细胞肺癌, status 进行中, applicant 默沙东.
-
-**Assistant replies (sketch):**
-> Recognizes this as a CDE advanced (structured) search. Instead of guessing, it pops a routing menu so you confirm each dimension before the query is built:
-
-> ┌─ CDE search scope ──────────────────────────┐
-> │ 1) Keyword / drug name : 帕博利珠单抗        │
-> │ 2) Indication          : 非小细胞肺癌        │
-> │ 3) Drug type           : 化学药物            │
-> │ 4) Applicant (申办方)   : 默沙东              │
-> │ 5) Trial status        : 进行中              │
-> │ 6) Confirm & run                               │
-> │ 7) 还拿不准 → 详细解释差异 (explain differences) │
-> └─────────────────────────────────────────────┘
-
-> Selecting **7) 还拿不准 → 详细解释差异** opens a sub-explanation of what each field filters, why `trial_status` must use the exact enum value (进行中, not "正在进行"), and that CDE has no phase filter (phase comes from detail mode later). You adjust any item, then confirm.
-
-**How to trigger real computation:**
-> The menu is a safe preview. After you confirm (item 6), say "run it" to send the payload to the CDE unified endpoint.
-**🖥️ Workbench:** open **高级参数 / Advanced parameters** to set the CDE structured fields (drug type, applicant, trial status — status must use the exact enum value 进行中), then in **当前检索 / Current search** fill the drug / indication and tick **only CDE 中国 / China CDE** → **检索注册库 / Search registries**.
-
-### Example 4 · Vague — grill-me clarification
-**You say:**
-> I'm not sure what I want yet — I just heard about a competitor's new drug.
-
-**Assistant replies (sketch):**
-> Asks branch by branch to pin down your need, e.g.:
-> - "Do you know the drug name, or just the disease area / mechanism?"
-> - "Are you comparing globally, or specifically in China (CDE)?"
-> - "Is this for competitive landscaping, control-design benchmarking, or de-duplication before your own trial?"
-> - "Any phase / status / time window you care about?"
-
-> Once clarified (e.g. "a GLP-1 class drug, global + China, phase 3, last 3 years"), it proposes a scope and keywords, then previews the plan.
-
-**How to trigger real computation:**
-> Safe preview throughout clarification; say "run it" once the scope is confirmed to execute.
-**🖥️ Workbench:** the workbench needs a concrete query, so use it once you know roughly what you want — type candidate keywords into *Intervention / drug* and *Disease / condition*, tick the registries you care about (global pair, or CDE only) and click **检索注册库 / Search registries**; adjust and re-run as the scope sharpens.
-
-### Example 5 · Structured detail + document links
-**You say:**
-> Pull the detailed records (sponsor, phase, endpoints) for the NSCLC CDE hits, and list any downloadable PDFs.
-
-**Assistant replies (sketch):**
-> Runs CDE `detail` mode (65 fields per record) so sponsor / phase are populated (list mode shows them as `Unknown`). It renders a homepage link for every record and **lists** (but does not auto-download) any EU-CTR PDFs. PDFs download only after you explicitly confirm.
-
-**How to trigger real computation:**
-> Detail fetch auto-runs if ≤100 items; if >100 it confirms the list first. Say "download the PDFs" to trigger the explicit download gate.
-**🖥️ Workbench:** after a CDE search, each row in the result table carries its **detail / homepage link** — open a record to see the 65-field detail (sponsor and phase are populated here, where list mode shows `Unknown`). PDF links are listed but never auto-downloaded; download is a separate confirm-gated step.
-
-### Example 6 · Broad global coverage via WHO ICTRP
-**You say:**
-> Give me the global landscape of DPP-4 inhibitor trials for type 2 diabetes since 2023.
-
-**Assistant replies (sketch):**
-> Uses WHO ICTRP (one call mirrors 14+ primary registries: CT.gov, EU-CTR, ISRCTN, DRKS, ChiCTR, jRCT, ANZCTR, CTRI …) plus China CDE (always searched independently, since WHO's English-title matching misses Chinese-registered trials), aggregates into one landscape with a competitor map.
-
-**How to trigger real computation:**
-> Safe preview shows scope (WHO + CDE = two endpoints); say "run it" to execute. Counted as one demand against the shared quota.
-**🖥️ Workbench:** **当前检索 / Current search** → *Intervention / drug* `DPP-4 inhibitor`, *Disease / condition* `type 2 diabetes`, *Last N years* `3` → tick **WHO ICTRP** + **CDE 中国 / China CDE** → **检索注册库 / Search registries**. One click covers 14+ primary registries plus the independent CDE search.
+Both entries give the same results and the same exports. Scan the capability index below first, then copy the wording in the cases to get started.
 
 ---
 
@@ -131,6 +41,49 @@ Just describe what you need in plain language. The assistant auto-decides which 
 | Structured output: JSON / Markdown / PNG / Excel | — | "Export the landscape as an Excel workbook" |
 | Snapshot tracking / status-change alerts | Local snapshot diff across runs | "Track status changes of these trials" |
 | Chained downstream analysis | → `ct-pipeline` / `ct-protocol` | "Feed the normalized results to ct-pipeline for intel" |
+
+---
+
+## Use Cases
+
+> Copy the line under "You say:" in either case and go. The default is **safe preview** (a search plan first); say "run it" to execute the real search. Every case ends with how to do the same thing on the web workbench. Ask in Chinese or English — the answer and the deliverables follow your language. For everything else (advanced CDE search, structured detail, snapshot tracking …), see the **Try saying / doing** column of the capability index above.
+
+### Case 1 · A focused search in one registry only
+
+**You say:**
+> Find trials registered by Pfizer in oncology, ClinicalTrials.gov only.
+
+**Assistant replies (sketch):**
+> Searched ClinicalTrials.gov only, as you specified: 1,467 trials found, 10 retrieved; 10 records after merging, no duplicates.
+> - Phase mix: Phase 1 — 4, Phase 2 — 3, Phase 3 — 2, unlabeled — 1
+> - Region mix: United States 9, Spain 5, France 4, Belgium 3, Canada 3
+> - Top sponsors: Pfizer 6 …
+>
+> Every trial carries its registration number and a clickable link to its registry homepage; the full list is also packaged as an Excel workbook you can download.
+
+**🖥️ Workbench:**
+> In **当前检索 / Current search**, set *Disease / condition* to `oncology` and *Sponsor* to `Pfizer`, and tick **only ClinicalTrials.gov** under *Registries* → click **检索注册库 / Search registries**.
+> Before you submit, the "search plan" card lists the enabled sites and keywords (Chinese "肿瘤" is automatically rendered as Oncology). The result table gives each trial's registration number, title, phase, status, country, sponsor and registry homepage link; the Excel workbook is one click away at the top right.
+
+### Case 2 · A Chinese drug name, automatically merged across sources
+
+**You say:**
+> Find trials of 阿西米尼 and give me a global landscape.
+
+**Assistant replies (sketch):**
+> The Chinese drug name was automatically localized to `asciminib`; ClinicalTrials.gov and the EU CTIS registry were searched in parallel and merged into one landscape:
+> - ClinicalTrials.gov: 60 found, 50 retrieved; CTIS: 14 retrieved; 64 in total, 64 after de-duplication
+> - Phase mix: Phase 2 — 19, Phase 1 — 13, Phase 1/2 — 10, Phase 3 — 5, unlabeled — 10
+> - Region mix: United States 27, Germany 13, South Korea 12, France 11, Italy 10
+> - Top sponsors: Novartis Pharmaceuticals 24, Novartis Pharma AG 8, M.D. Anderson Cancer Center 5
+>
+> The result also includes a status breakdown and a timeline by start year, plus an Excel workbook; every row carries its registration number and source so you can verify it back at the registry.
+
+**🖥️ Workbench:**
+> In **当前检索 / Current search**, set *Intervention / drug* to `阿西米尼`, and tick **ClinicalTrials.gov** and **CTIS** (optionally China ChiCTR as well) → click **检索注册库 / Search registries**.
+> The "search plan" card shows the keyword used at each site (the Chinese drug name is automatically rendered as asciminib); the result area gives the total count, phase / status / sponsor / timeline breakdowns, and an Excel workbook to download at the top right.
+
+---
 
 ## Data Sources & Status
 
@@ -277,9 +230,11 @@ Caveat: registries update on their own cadence and may have gaps or lags; always
 
 ---
 
-**Version**: v0.14.5 | **License**: MIT | **Authors**: medstatstar, phoe-zip
+**Version**: v1.0.1 | **License**: MIT | **Authors**: medstatstar, phoe-zip
 
 For feature requests, bug reports, or other feedback, please contact the author directly at medstatstar@gmail.com (Wintone Zhang / 张文彤).
+
+---
 
 ## Confidentiality Notice
 
@@ -287,4 +242,3 @@ For feature requests, bug reports, or other feedback, please contact the author 
 >
 > - **Tier A (non-confidential input)**: the input is ordinary data and involves no confidential information. Tier A skills can run after local installation or be used via the Web interface, and all Tier A skills are published openly on GitHub.
 > - **Tier B (confidential input)**: the input contains clinical-trial data / protocols / CRFs that pharma sponsors must keep strictly confidential. Tier B skills can either be installed and processed locally (data never leaves your domain) or be used via the Web interface with no installation required (data is de-identified before upload), but Tier B skills themselves are not published openly. For custom / on-prem deployment needs, contact the author.
-

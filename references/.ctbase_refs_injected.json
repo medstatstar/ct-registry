@@ -1,17 +1,20 @@
 {
   "generated_by": "ct-base/scripts/inject_references_shared.py",
-  "ct_base": "C:\\Users\\Wintone\\.workbuddy\\skills\\ct-base",
+  "ct_base": "C:\\Users\\WintoneFileSrv\\.workbuddy\\skills\\ct-base",
   "skill": "ct-registry",
   "files": [
+    "xlsx_delivery.md",
     "language_policy.md",
     "report_template.md"
   ],
-  "backups": [],
+  "backups": [
+    "C:\\Users\\WintoneFileSrv\\.workbuddy\\skills\\ct-registry\\references\\xlsx_delivery.md.ctbase_bak_20261115-161416"
+  ],
   "unchanged": [
     "language_policy.md",
     "report_template.md"
   ],
   "skipped_exempt": [],
   "skipped_not_referenced": [],
-  "timestamp": "2026-11-13T18:06:37.557058"
+  "timestamp": "2026-11-15T16:14:16.976881"
 }

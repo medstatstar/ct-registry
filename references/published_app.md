@@ -26,15 +26,18 @@
 > 若本技能将来出现 `shareLink` 漂移 / mis-binding，按同一原则处理：换一个全新的载荷目录名，
 > 旧的被误绑路径永久退役，且每次部署后必须断言返回的 `shareLink` 仍是本表地址。
 
-## Version anchors（2026-11-08 统一到 0.14.5）
+## Version anchors（2026-11-15 统一到 1.0.1）
 
 | 位置 | 值 |
 |---|---|
-| `SKILL.md` front-matter `version` | `0.14.5` |
-| `SKILL.md` §Deliverable language | `v0.14.5` |
-| `CHANGELOG.md` 首条 | `0.14.5 — 2026-11-06` |
-| `workbench/workbench.config.json` `version` | `0.14.5` — **页脚 `wb-footer-ver` 读这里**（`/api/config` 直读本文件） |
-| `workbench/app.config.json` `version` | `0.14.5` |
+| `SKILL.md` front-matter `version` | `1.0.1` |
+| `SKILL.md` §Deliverable language | `v1.0.1` |
+| `CHANGELOG.md` 首条 | `1.0.1 — 2026-11-15` |
+| `README.md` / `README_zh-CN.md` 页脚 | `v1.0.1` |
+| `AGENTS.md` 标题 | `v1.0.1` |
+| `workbench/workbench.config.json` `version` | `1.0.1` — **页脚 `wb-footer-ver` 读这里**（`/api/config` 直读本文件） |
+| `workbench/app.config.json` `version` | `1.0.1` |
+| `workbench/publish/workbench/workbench.config.json` `version` | `1.0.1`（发布载荷内页脚版本来源，随升版同步） |
 
 > 页脚版本链路：`index.html:wbRenderFooter()` → `WB_CFG.version` → `/api/config` → `workbench.config.json`。
 > 任何一处漏改，用户就会看到过期版本号（2026-11-08 前线上显示 `v0.1.1`）。
@@ -69,8 +72,8 @@
 ## 部署后冒烟清单
 
 ```
-GET  /api/config                 → version = 0.14.5
-GET  /                          → 页脚显示 v0.14.5
+GET  /api/config                 → version = 1.0.1
+GET  /                          → 页脚显示 v1.0.1
 GET  /api/sources               → 源健康 / 降级状态可读
 POST /api/plan                  → 返回站点 × 关键词组计划
 POST /api/diff {a,b}            → 返回 status_delta（纯本地、零联网）
