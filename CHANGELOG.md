@@ -13,6 +13,8 @@
 
 **验证**：本地 Playwright 双场景（正常加载 / 拦截 `tokens.css` 并删掉 A·AB 档 ghost 块模拟旧版缓存）——四控件底色均 `transparent`、高度均 34px、图标均 18×18，两场景结果一致；空态图标 CSS 正常与缺失两场景均锁 30×30。线上实测：顶栏四控件 `top` 全为 18 齐平、空态图标 30×30、`/api/health` 返回 `mock:false`、console 无错误；`tokens.css?v=20261115b` 返回 200 / 51,712B。发布闸门：PRE / SECURITY（P0=0 / P1=0）/ POST 全 PASS，前端 8 资源字节级 MATCH。
 
+**已知平台差异（记明）**：README 两份首屏展示图 `assets/screenshots/{en,zh}/01-home.jpg` 依赖 `.jpg`，**SkillHub 白名单不含位图扩展名，上传时会擦除该文件 → SkillHub 页面上该图 404**；GitHub / ClawHub 侧图片正常。判定为可接受的平台白名单限制（与 ct-literature 同款处置），仅影响展示图，不影响技能功能与文档正文。
+
 ## 1.0.0 · 2026-11-15 · 首个正式发布版（发布准备）
 
 对齐 ct-base §16 与 Ct-Update 发布审计后升版 `0.14.5` → `1.0.0`。本次实质变更集中在文档规范与交付卫生，**功能层不变**：
